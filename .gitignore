@@ -1,0 +1,41 @@
+# Binaries
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Build artifacts
+*.test
+*.out
+
+# Go module caches
+vendor/
+
+# IDE/editor noise
+.idea/
+.vscode/
+*.swp
+.DS_Store
+.env
+
+basic
+
+# Example binaries
+examples/cli/cli
+examples/mcp/mcp
+examples/http/http
+
+# Local agents config artifacts (any depth)
+**/.agents/settings.local.json
+**/.agents/history/
+**/.agents/state/
+**/.http-trace/
+
+tools.json
+.gocache
+.gomodcache
+.swe-agent
+.trace
+trace-out/

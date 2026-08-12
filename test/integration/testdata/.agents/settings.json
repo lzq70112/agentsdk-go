@@ -1,0 +1,11 @@
+{
+  "model": "embedded-model",
+  "env": {
+    "SOURCE": "embed",
+    "EMBED_ONLY": "1"
+  },
+  "permissions": {
+    "allow": ["Bash(ls:*)"],
+    "deny": ["Bash(rm:*)"]
+  }
+}
