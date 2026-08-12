@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/stellarlinkco/agentsdk-go/pkg/middleware"
-	"github.com/stellarlinkco/agentsdk-go/pkg/model"
+	"github.com/lzq70112/agentsdk-go/pkg/middleware"
+	"github.com/lzq70112/agentsdk-go/pkg/model"
 )
 
 // TestAfterAgentForwardsRealStopReason 验证 AfterAgent 透传 resp.StopReason

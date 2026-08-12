@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stellarlinkco/agentsdk-go/pkg/message"
+	"github.com/lzq70112/agentsdk-go/pkg/message"
 )
 
 func TestSessionEvictionCleansToolOutputDir(t *testing.T) {

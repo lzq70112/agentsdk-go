@@ -46,7 +46,7 @@ func (h *demoHooks) PostToolUse(ctx context.Context, payload events.ToolResultPa
 
 ```go
 import (
-    "github.com/stellarlinkco/agentsdk-go/pkg/hooks"
+    "github.com/lzq70112/agentsdk-go/pkg/hooks"
 )
 
 sel, _ := hooks.NewSelector("^Bash$", "") // limit to Bash tool

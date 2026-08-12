@@ -915,7 +915,7 @@ Gate: All acceptance criteria from PRD pass
 - **Reuse `toolTransactionSpans()`** from `pkg/api/compact.go` lines 399-436. It is correct, well-tested, and ~40 lines. Copy it into the new compact.go.
 - **The agent loop is ~120 lines of actual logic** (the rest of `pkg/agent/agent.go` is type definitions and constructor). When inlining, keep the loop structure but replace `a.model.Generate()` with `r.model.CompleteStream()` and manage history inline.
 - **Do not create a new `agent.Context` equivalent**. Use `middleware.State` directly. The agent context was thin glue that added no value.
-- **Import path changes are mechanical**. After merging `pkg/core/*`, find-and-replace `coreevents "github.com/stellarlinkco/agentsdk-go/pkg/core/events"` with `"github.com/stellarlinkco/agentsdk-go/pkg/hooks"` across all files.
+- **Import path changes are mechanical**. After merging `pkg/core/*`, find-and-replace `coreevents "github.com/lzq70112/agentsdk-go/pkg/core/events"` with `"github.com/lzq70112/agentsdk-go/pkg/hooks"` across all files.
 
 ### For Architecture Guardrails
 

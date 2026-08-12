@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stellarlinkco/agentsdk-go/pkg/middleware"
-	"github.com/stellarlinkco/agentsdk-go/pkg/runtime/skills"
+	"github.com/lzq70112/agentsdk-go/pkg/middleware"
+	"github.com/lzq70112/agentsdk-go/pkg/runtime/skills"
 )
 
 func TestSkillLazyLoadingDemo(t *testing.T) {

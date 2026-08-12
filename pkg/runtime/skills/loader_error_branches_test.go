@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stellarlinkco/agentsdk-go/pkg/config"
+	"github.com/lzq70112/agentsdk-go/pkg/config"
 	"gopkg.in/yaml.v3"
 )
 

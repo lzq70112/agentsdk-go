@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stellarlinkco/agentsdk-go/pkg/config"
-	modelpkg "github.com/stellarlinkco/agentsdk-go/pkg/model"
+	"github.com/lzq70112/agentsdk-go/pkg/config"
+	modelpkg "github.com/lzq70112/agentsdk-go/pkg/model"
 )
 
 func TestNewDemoModel_DefaultSettingsAndFields(t *testing.T) {

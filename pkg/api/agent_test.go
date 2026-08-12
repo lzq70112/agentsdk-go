@@ -9,12 +9,12 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/stellarlinkco/agentsdk-go/pkg/config"
-	hooks "github.com/stellarlinkco/agentsdk-go/pkg/hooks"
-	"github.com/stellarlinkco/agentsdk-go/pkg/message"
-	"github.com/stellarlinkco/agentsdk-go/pkg/model"
-	"github.com/stellarlinkco/agentsdk-go/pkg/runtime/skills"
-	"github.com/stellarlinkco/agentsdk-go/pkg/tool"
+	"github.com/lzq70112/agentsdk-go/pkg/config"
+	hooks "github.com/lzq70112/agentsdk-go/pkg/hooks"
+	"github.com/lzq70112/agentsdk-go/pkg/message"
+	"github.com/lzq70112/agentsdk-go/pkg/model"
+	"github.com/lzq70112/agentsdk-go/pkg/runtime/skills"
+	"github.com/lzq70112/agentsdk-go/pkg/tool"
 )
 
 func TestRuntimeRequiresModelFactory(t *testing.T) {

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/stellarlinkco/agentsdk-go/pkg/config"
-	hooks "github.com/stellarlinkco/agentsdk-go/pkg/hooks"
+	"github.com/lzq70112/agentsdk-go/pkg/config"
+	hooks "github.com/lzq70112/agentsdk-go/pkg/hooks"
 )
 
 func newHookExecutor(opts Options, settings *config.Settings) *hooks.Executor {

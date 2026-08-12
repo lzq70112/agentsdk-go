@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stellarlinkco/agentsdk-go/examples/internal/demomodel"
-	"github.com/stellarlinkco/agentsdk-go/pkg/api"
+	"github.com/lzq70112/agentsdk-go/examples/internal/demomodel"
+	"github.com/lzq70112/agentsdk-go/pkg/api"
 )
 
 func newTestHTTPServer(t *testing.T) (*httptest.Server, func()) {

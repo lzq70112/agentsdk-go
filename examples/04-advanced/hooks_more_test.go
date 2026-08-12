@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stellarlinkco/agentsdk-go/pkg/hooks"
+	"github.com/lzq70112/agentsdk-go/pkg/hooks"
 )
 
 func TestDemoHooks_RecordAndSnapshot(t *testing.T) {

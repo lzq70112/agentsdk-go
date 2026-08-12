@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stellarlinkco/agentsdk-go/pkg/api"
-	"github.com/stellarlinkco/agentsdk-go/pkg/middleware"
-	"github.com/stellarlinkco/agentsdk-go/pkg/model"
-	"github.com/stellarlinkco/agentsdk-go/pkg/tool"
+	"github.com/lzq70112/agentsdk-go/pkg/api"
+	"github.com/lzq70112/agentsdk-go/pkg/middleware"
+	"github.com/lzq70112/agentsdk-go/pkg/model"
+	"github.com/lzq70112/agentsdk-go/pkg/tool"
 )
 
 func TestRun_AllFeaturesEnabled(t *testing.T) {

@@ -4,11 +4,11 @@ import (
 	"context"
 	"testing"
 
-	"github.com/stellarlinkco/agentsdk-go/pkg/message"
-	"github.com/stellarlinkco/agentsdk-go/pkg/model"
-	"github.com/stellarlinkco/agentsdk-go/pkg/runtime/skills"
-	"github.com/stellarlinkco/agentsdk-go/pkg/runtime/subagents"
-	"github.com/stellarlinkco/agentsdk-go/pkg/tool"
+	"github.com/lzq70112/agentsdk-go/pkg/message"
+	"github.com/lzq70112/agentsdk-go/pkg/model"
+	"github.com/lzq70112/agentsdk-go/pkg/runtime/skills"
+	"github.com/lzq70112/agentsdk-go/pkg/runtime/subagents"
+	"github.com/lzq70112/agentsdk-go/pkg/tool"
 )
 
 type helperStubTool struct {

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stellarlinkco/agentsdk-go/pkg/runtime/skills"
+	"github.com/lzq70112/agentsdk-go/pkg/runtime/skills"
 )
 
 type fakeTempFile struct {

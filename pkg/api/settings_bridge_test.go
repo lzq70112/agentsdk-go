@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/stellarlinkco/agentsdk-go/pkg/config"
+	"github.com/lzq70112/agentsdk-go/pkg/config"
 )
 
 func TestLoadSettingsMergesOverridesAndInitialisesEnv(t *testing.T) {

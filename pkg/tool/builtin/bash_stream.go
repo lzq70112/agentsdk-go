@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/stellarlinkco/agentsdk-go/pkg/tool"
+	"github.com/lzq70112/agentsdk-go/pkg/tool"
 )
 
 func openCommandPipes(cmd *exec.Cmd) (io.ReadCloser, io.ReadCloser, error) {

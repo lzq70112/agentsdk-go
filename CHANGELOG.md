@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2.0.0] - 2025-03-20
 
 ### Breaking Changes
-- **Module rename**: `github.com/cexll/agentsdk-go` → `github.com/stellarlinkco/agentsdk-go`
+- **Module rename**: `github.com/cexll/agentsdk-go` → `github.com/lzq70112/agentsdk-go`
 - **Package consolidation**: 24+ packages → ~11 packages (~34K → ~15-20K non-test lines)
 - **Middleware**: 6 stages → 4 (`BeforeAgent`, `BeforeTool`, `AfterTool`, `AfterAgent`); removed `BeforeModel`/`AfterModel`
 - **Tool names**: `file_read` → `read`, `file_write` → `write`, `file_edit` → `edit`

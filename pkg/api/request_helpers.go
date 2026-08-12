@@ -5,8 +5,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/stellarlinkco/agentsdk-go/pkg/runtime/skills"
-	"github.com/stellarlinkco/agentsdk-go/pkg/runtime/subagents"
+	"github.com/lzq70112/agentsdk-go/pkg/runtime/skills"
+	"github.com/lzq70112/agentsdk-go/pkg/runtime/subagents"
 )
 
 func applyPromptMetadata(prompt string, meta map[string]any) string {

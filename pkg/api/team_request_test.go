@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/stellarlinkco/agentsdk-go/pkg/model"
-	"github.com/stellarlinkco/agentsdk-go/pkg/runtime/skills"
-	"github.com/stellarlinkco/agentsdk-go/pkg/runtime/subagents"
+	"github.com/lzq70112/agentsdk-go/pkg/model"
+	"github.com/lzq70112/agentsdk-go/pkg/runtime/skills"
+	"github.com/lzq70112/agentsdk-go/pkg/runtime/subagents"
 )
 
 func TestRuntimeRunUsesTeamRequest(t *testing.T) {

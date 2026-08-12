@@ -24,7 +24,7 @@ go version  # should show go1.24 or later
 ### Get the Source
 
 ```bash
-git clone https://github.com/stellarlinkco/agentsdk-go.git
+git clone https://github.com/lzq70112/agentsdk-go.git
 cd agentsdk-go
 ```
 
@@ -58,8 +58,8 @@ import (
     "log"
     "os"
 
-    "github.com/stellarlinkco/agentsdk-go/pkg/api"
-    "github.com/stellarlinkco/agentsdk-go/pkg/model"
+    "github.com/lzq70112/agentsdk-go/pkg/api"
+    "github.com/lzq70112/agentsdk-go/pkg/model"
 )
 
 func main() {
@@ -111,9 +111,9 @@ import (
     "os"
     "time"
 
-    "github.com/stellarlinkco/agentsdk-go/pkg/api"
-    "github.com/stellarlinkco/agentsdk-go/pkg/middleware"
-    "github.com/stellarlinkco/agentsdk-go/pkg/model"
+    "github.com/lzq70112/agentsdk-go/pkg/api"
+    "github.com/lzq70112/agentsdk-go/pkg/middleware"
+    "github.com/lzq70112/agentsdk-go/pkg/model"
 )
 
 func main() {
@@ -173,8 +173,8 @@ import (
     "log"
     "os"
 
-    "github.com/stellarlinkco/agentsdk-go/pkg/api"
-    "github.com/stellarlinkco/agentsdk-go/pkg/model"
+    "github.com/lzq70112/agentsdk-go/pkg/api"
+    "github.com/lzq70112/agentsdk-go/pkg/model"
 )
 
 func main() {
@@ -330,7 +330,7 @@ Global settings under `~/.agents/` are optional and act as a low-priority baseli
 ### Load Config
 
 ```go
-import "github.com/stellarlinkco/agentsdk-go/pkg/config"
+import "github.com/lzq70112/agentsdk-go/pkg/config"
 
 loader := &config.SettingsLoader{ProjectRoot: "."}
 
@@ -403,7 +403,7 @@ import (
     "log"
     "time"
 
-    "github.com/stellarlinkco/agentsdk-go/pkg/middleware"
+    "github.com/lzq70112/agentsdk-go/pkg/middleware"
 )
 
 // 令牌桶限流器

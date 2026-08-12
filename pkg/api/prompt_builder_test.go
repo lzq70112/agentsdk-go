@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stellarlinkco/agentsdk-go/pkg/model"
+	"github.com/lzq70112/agentsdk-go/pkg/model"
 )
 
 func TestSystemPromptBuilderBuildOrdersByPriority(t *testing.T) {

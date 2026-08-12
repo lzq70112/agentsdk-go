@@ -7,8 +7,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/stellarlinkco/agentsdk-go/pkg/sandbox"
-	"github.com/stellarlinkco/agentsdk-go/pkg/tool"
+	"github.com/lzq70112/agentsdk-go/pkg/sandbox"
+	"github.com/lzq70112/agentsdk-go/pkg/tool"
 )
 
 const editDescription = `Performs exact string replacements within the configured sandbox (old_string must be unique unless replace_all).`

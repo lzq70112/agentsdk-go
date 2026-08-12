@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/stellarlinkco/agentsdk-go/pkg/api"
-	"github.com/stellarlinkco/agentsdk-go/pkg/runtime/skills"
+	"github.com/lzq70112/agentsdk-go/pkg/api"
+	"github.com/lzq70112/agentsdk-go/pkg/runtime/skills"
 )
 
 func buildSkills() []api.SkillRegistration {

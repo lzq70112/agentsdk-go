@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stellarlinkco/agentsdk-go/pkg/api"
+	"github.com/lzq70112/agentsdk-go/pkg/api"
 )
 
 func TestRunOfflineMinimal(t *testing.T) {

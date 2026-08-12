@@ -124,7 +124,7 @@ User response
 ### Get the SDK
 
 ```bash
-go get github.com/stellarlinkco/agentsdk-go
+go get github.com/lzq70112/agentsdk-go
 ```
 
 ## Quick Start
@@ -151,8 +151,8 @@ import (
     "fmt"
     "log"
 
-    "github.com/stellarlinkco/agentsdk-go/pkg/api"
-    "github.com/stellarlinkco/agentsdk-go/pkg/model"
+    "github.com/lzq70112/agentsdk-go/pkg/api"
+    "github.com/lzq70112/agentsdk-go/pkg/model"
 )
 
 func main() {
@@ -192,8 +192,8 @@ import (
     "log"
     "time"
 
-    "github.com/stellarlinkco/agentsdk-go/pkg/api"
-    "github.com/stellarlinkco/agentsdk-go/pkg/middleware"
+    "github.com/lzq70112/agentsdk-go/pkg/api"
+    "github.com/lzq70112/agentsdk-go/pkg/middleware"
 )
 
 // Logging middleware using the Funcs helper

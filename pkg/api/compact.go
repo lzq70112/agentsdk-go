@@ -7,8 +7,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/stellarlinkco/agentsdk-go/pkg/message"
-	"github.com/stellarlinkco/agentsdk-go/pkg/model"
+	"github.com/lzq70112/agentsdk-go/pkg/message"
+	"github.com/lzq70112/agentsdk-go/pkg/model"
 )
 
 // CompactConfig controls automatic context compaction.

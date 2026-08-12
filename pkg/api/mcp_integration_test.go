@@ -7,14 +7,14 @@ import (
 	"time"
 	_ "unsafe"
 
-	"github.com/stellarlinkco/agentsdk-go/pkg/mcp"
-	"github.com/stellarlinkco/agentsdk-go/pkg/tool"
+	"github.com/lzq70112/agentsdk-go/pkg/mcp"
+	"github.com/lzq70112/agentsdk-go/pkg/tool"
 )
 
-//go:linkname patchedNewMCPClient github.com/stellarlinkco/agentsdk-go/pkg/tool.newMCPClient
+//go:linkname patchedNewMCPClient github.com/lzq70112/agentsdk-go/pkg/tool.newMCPClient
 var patchedNewMCPClient func(ctx context.Context, spec string, handler func(context.Context, *mcp.ClientSession)) (*mcp.ClientSession, error)
 
-//go:linkname patchedNewMCPClientWithOptions github.com/stellarlinkco/agentsdk-go/pkg/tool.newMCPClientWithOptions
+//go:linkname patchedNewMCPClientWithOptions github.com/lzq70112/agentsdk-go/pkg/tool.newMCPClientWithOptions
 var patchedNewMCPClientWithOptions func(ctx context.Context, spec string, opts tool.MCPServerOptions, handler func(context.Context, *mcp.ClientSession)) (*mcp.ClientSession, error)
 
 type mcpCallCounter struct {

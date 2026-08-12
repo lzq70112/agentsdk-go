@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/stellarlinkco/agentsdk-go/pkg/runtime/subagents"
+	"github.com/lzq70112/agentsdk-go/pkg/runtime/subagents"
 )
 
 var ErrSubagentManagerUnavailable = errors.New("api: subagent manager is unavailable")

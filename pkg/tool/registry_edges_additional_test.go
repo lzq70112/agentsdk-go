@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stellarlinkco/agentsdk-go/pkg/mcp"
+	"github.com/lzq70112/agentsdk-go/pkg/mcp"
 )
 
 func TestRegisterMCPServerConnectContextErrorWins(t *testing.T) {

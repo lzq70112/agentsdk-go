@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stellarlinkco/agentsdk-go/pkg/config"
+	"github.com/lzq70112/agentsdk-go/pkg/config"
 )
 
 func TestLoadFromFS_Basic(t *testing.T) {

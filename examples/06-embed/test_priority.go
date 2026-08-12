@@ -10,8 +10,8 @@ import (
 	"log"
 	"os"
 
-	"github.com/stellarlinkco/agentsdk-go/pkg/api"
-	"github.com/stellarlinkco/agentsdk-go/pkg/model"
+	"github.com/lzq70112/agentsdk-go/pkg/api"
+	"github.com/lzq70112/agentsdk-go/pkg/model"
 )
 
 //go:embed .agents

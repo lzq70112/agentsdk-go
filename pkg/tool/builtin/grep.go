@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"regexp"
 
-	"github.com/stellarlinkco/agentsdk-go/pkg/gitignore"
-	"github.com/stellarlinkco/agentsdk-go/pkg/sandbox"
-	"github.com/stellarlinkco/agentsdk-go/pkg/tool"
+	"github.com/lzq70112/agentsdk-go/pkg/gitignore"
+	"github.com/lzq70112/agentsdk-go/pkg/sandbox"
+	"github.com/lzq70112/agentsdk-go/pkg/tool"
 )
 
 const (

@@ -1,4 +1,4 @@
-module github.com/stellarlinkco/agentsdk-go
+module github.com/lzq70112/agentsdk-go
 
 go 1.24.0
 

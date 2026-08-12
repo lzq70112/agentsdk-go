@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stellarlinkco/agentsdk-go/pkg/runtime/skills"
+	"github.com/lzq70112/agentsdk-go/pkg/runtime/skills"
 )
 
 func TestBuildSkillDescriptionEscapesAndDefaults(t *testing.T) {

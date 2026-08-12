@@ -8,13 +8,13 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/stellarlinkco/agentsdk-go/pkg/hooks"
-	"github.com/stellarlinkco/agentsdk-go/pkg/message"
-	"github.com/stellarlinkco/agentsdk-go/pkg/model"
-	"github.com/stellarlinkco/agentsdk-go/pkg/runtime/subagents"
-	"github.com/stellarlinkco/agentsdk-go/pkg/sandbox"
-	"github.com/stellarlinkco/agentsdk-go/pkg/tool"
-	toolbuiltin "github.com/stellarlinkco/agentsdk-go/pkg/tool/builtin"
+	"github.com/lzq70112/agentsdk-go/pkg/hooks"
+	"github.com/lzq70112/agentsdk-go/pkg/message"
+	"github.com/lzq70112/agentsdk-go/pkg/model"
+	"github.com/lzq70112/agentsdk-go/pkg/runtime/subagents"
+	"github.com/lzq70112/agentsdk-go/pkg/sandbox"
+	"github.com/lzq70112/agentsdk-go/pkg/tool"
+	toolbuiltin "github.com/lzq70112/agentsdk-go/pkg/tool/builtin"
 )
 
 type runtimeToolExecutor struct {

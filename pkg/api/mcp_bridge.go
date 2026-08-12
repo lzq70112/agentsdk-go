@@ -3,7 +3,7 @@ package api
 import (
 	"strings"
 
-	"github.com/stellarlinkco/agentsdk-go/pkg/config"
+	"github.com/lzq70112/agentsdk-go/pkg/config"
 )
 
 type mcpServer struct {

@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stellarlinkco/agentsdk-go/pkg/model"
-	"github.com/stellarlinkco/agentsdk-go/pkg/tool"
-	toolbuiltin "github.com/stellarlinkco/agentsdk-go/pkg/tool/builtin"
+	"github.com/lzq70112/agentsdk-go/pkg/model"
+	"github.com/lzq70112/agentsdk-go/pkg/tool"
+	toolbuiltin "github.com/lzq70112/agentsdk-go/pkg/tool/builtin"
 )
 
 type deferredFooTool struct {

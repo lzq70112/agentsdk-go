@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	modelpkg "github.com/stellarlinkco/agentsdk-go/pkg/model"
+	modelpkg "github.com/lzq70112/agentsdk-go/pkg/model"
 )
 
 func TestGenRequestID_RandErrorFallsBack(t *testing.T) {

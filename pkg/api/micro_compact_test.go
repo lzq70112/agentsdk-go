@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/stellarlinkco/agentsdk-go/pkg/message"
+	"github.com/lzq70112/agentsdk-go/pkg/message"
 )
 
 func TestCompactor_MicroCompactsOldMessagesBeforeLLMCompaction(t *testing.T) {
