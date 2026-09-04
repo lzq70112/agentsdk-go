@@ -2,8 +2,10 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"maps"
 	"strings"
 
@@ -238,6 +240,9 @@ func (rt *Runtime) runLoop(prep preparedRun, mdl model.Model, hookAdapter *runti
 			Tools:             toolDefs,
 			System:            systemPrompt,
 			EnablePromptCache: enableCache,
+		}
+		if msgsJSON, err := json.Marshal(req.Messages); err == nil {
+			log.Printf("[api:runLoop] model request messages (iteration=%d): %s", iteration, msgsJSON)
 		}
 		state.ModelInput = &req
 		state.Values["model.request"] = req
