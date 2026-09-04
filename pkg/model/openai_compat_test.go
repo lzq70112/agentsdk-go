@@ -264,6 +264,70 @@ func TestOpenAIProvider_AssistantMessageWithoutContentAndWithToolCalls(t *testin
 	assert.Empty(t, assistantMsg["content"])
 }
 
+func TestOpenAIProvider_SystemMessagesAlwaysFirst(t *testing.T) {
+	var receivedBody map[string]any
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		require.NoError(t, json.Unmarshal(body, &receivedBody))
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		require.NoError(t, json.NewEncoder(w).Encode(openai.ChatCompletion{
+			ID: "chatcmpl-test",
+			Choices: []openai.ChatCompletionChoice{
+				{
+					FinishReason: "stop",
+					Message:      openai.ChatCompletionMessage{Role: "assistant", Content: "ok"},
+				},
+			},
+		}))
+	}))
+	defer srv.Close()
+
+	mdl, err := NewOpenAI(OpenAIConfig{
+		APIKey:     "sk-test",
+		BaseURL:    srv.URL,
+		Model:      "glm-5.2",
+		System:     "default system",
+		HTTPClient: srv.Client(),
+	})
+	require.NoError(t, err)
+
+	_, err = mdl.Complete(context.Background(), Request{
+		System: "request system",
+		Messages: []Message{
+			{Role: "user", Content: "hi"},
+			{Role: "system", Content: "inline system"},
+			{Role: "assistant", Content: "hello"},
+		},
+	})
+	require.NoError(t, err)
+
+	messages, ok := receivedBody["messages"].([]any)
+	require.True(t, ok)
+	require.Len(t, messages, 5)
+
+	// All system messages must precede any user/assistant messages. Some
+	// OpenAI-compatible endpoints (GLM/Qwen/Kimi/MiniMax) reject requests where
+	// a system message appears after a user or assistant message.
+	assert.Equal(t, "system", getMessageRole(messages[0]))
+	assert.Equal(t, "system", getMessageRole(messages[1]))
+	assert.Equal(t, "system", getMessageRole(messages[2]))
+	assert.Equal(t, "user", getMessageRole(messages[3]))
+	assert.Equal(t, "assistant", getMessageRole(messages[4]))
+}
+
+func getMessageRole(msg any) string {
+	m, ok := msg.(map[string]any)
+	if !ok {
+		return ""
+	}
+	role, _ := m["role"].(string)
+	return role
+}
+
 func TestOpenAIProvider_FunctionParametersDropIncompatibleFields(t *testing.T) {
 	var receivedBody map[string]any
 

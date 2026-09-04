@@ -364,12 +364,13 @@ func (m *openaiModel) selectModel(override string) string {
 }
 
 func convertMessagesToOpenAI(msgs []Message, defaults ...string) []openai.ChatCompletionMessageParamUnion {
-	var result []openai.ChatCompletionMessageParamUnion
+	var systemMessages []openai.ChatCompletionMessageParamUnion
+	var otherMessages []openai.ChatCompletionMessageParamUnion
 
-	// Add system messages from defaults
+	// Collect system messages from defaults first.
 	for _, sys := range defaults {
 		if trimmed := strings.TrimSpace(sys); trimmed != "" {
-			result = append(result, openai.SystemMessage(trimmed))
+			systemMessages = append(systemMessages, openai.SystemMessage(trimmed))
 		}
 	}
 
@@ -378,12 +379,12 @@ func convertMessagesToOpenAI(msgs []Message, defaults ...string) []openai.ChatCo
 		switch role {
 		case "system":
 			if trimmed := strings.TrimSpace(msg.Content); trimmed != "" {
-				result = append(result, openai.SystemMessage(trimmed))
+				systemMessages = append(systemMessages, openai.SystemMessage(trimmed))
 			}
 		case "assistant":
-			result = append(result, buildOpenAIAssistantMessage(msg))
+			otherMessages = append(otherMessages, buildOpenAIAssistantMessage(msg))
 		case "tool":
-			result = append(result, buildOpenAIToolResults(msg)...)
+			otherMessages = append(otherMessages, buildOpenAIToolResults(msg)...)
 		default: // user
 			if len(msg.ContentBlocks) > 0 {
 				userParam := openai.ChatCompletionUserMessageParam{
@@ -391,7 +392,7 @@ func convertMessagesToOpenAI(msgs []Message, defaults ...string) []openai.ChatCo
 						OfArrayOfContentParts: buildOpenAIUserContentParts(msg),
 					},
 				}
-				result = append(result, openai.ChatCompletionMessageParamUnion{
+				otherMessages = append(otherMessages, openai.ChatCompletionMessageParamUnion{
 					OfUser: &userParam,
 				})
 				continue
@@ -400,10 +401,11 @@ func convertMessagesToOpenAI(msgs []Message, defaults ...string) []openai.ChatCo
 			if strings.TrimSpace(content) == "" {
 				content = "\u200b"
 			}
-			result = append(result, openai.UserMessage(content))
+			otherMessages = append(otherMessages, openai.UserMessage(content))
 		}
 	}
 
+	result := append(systemMessages, otherMessages...)
 	if len(result) == 0 {
 		result = append(result, openai.UserMessage("\u200b"))
 	}
