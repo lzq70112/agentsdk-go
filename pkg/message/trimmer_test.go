@@ -35,6 +35,55 @@ func TestTrimmerKeepsNewestWithinLimit(t *testing.T) {
 	}
 }
 
+func TestTrimmerPreservesNewestUserQuery(t *testing.T) {
+	history := []Message{
+		{Role: "user", Content: "old"},
+		{Role: "assistant", Content: "ok"},
+		{Role: "user", Content: "current"},
+		{Role: "assistant", Content: "after"}, // large, exceeds remaining budget
+		{Role: "tool", Content: "tool"},
+	}
+
+	counter := tokenCounterFunc(func(msg Message) int {
+		if msg.Content == "after" {
+			return 10
+		}
+		return 1
+	})
+
+	trimmer := NewTrimmer(5, counter)
+	trimmed := trimmer.Trim(history)
+
+	// The newest user query must survive even when later messages are dropped.
+	if len(trimmed) != 3 {
+		t.Fatalf("expected 3 messages, got %d: %+v", len(trimmed), trimmed)
+	}
+	if trimmed[0].Content != "old" || trimmed[1].Content != "ok" || trimmed[2].Content != "current" {
+		t.Fatalf("expected [old, ok, current], got %+v", trimmed)
+	}
+}
+
+func TestTrimmerPreservesNewestUserQueryEvenWhenAloneOverLimit(t *testing.T) {
+	history := []Message{
+		{Role: "user", Content: "current"},
+		{Role: "assistant", Content: "after"},
+	}
+
+	counter := tokenCounterFunc(func(msg Message) int {
+		if msg.Content == "current" {
+			return 10
+		}
+		return 1
+	})
+
+	trimmer := NewTrimmer(5, counter)
+	trimmed := trimmer.Trim(history)
+
+	if len(trimmed) != 1 || trimmed[0].Content != "current" {
+		t.Fatalf("expected [current], got %+v", trimmed)
+	}
+}
+
 func TestTrimmerZeroLimitReturnsEmpty(t *testing.T) {
 	trimmer := NewTrimmer(0, nil)
 	trimmed := trimmer.Trim([]Message{{Role: "user"}})
@@ -141,11 +190,11 @@ func TestTrimmerTableScenarios(t *testing.T) {
 			want:    []string{"solo"},
 		},
 		{
-			name:    "all messages exceed limit",
+			name:    "all messages exceed limit preserves newest user",
 			limit:   2,
-			history: []Message{{Content: "old"}, {Content: "new"}},
+			history: []Message{{Role: "user", Content: "old"}, {Role: "user", Content: "new"}},
 			counter: tokenCounterFunc(func(Message) int { return 3 }),
-			want:    []string{},
+			want:    []string{"new"},
 		},
 		{
 			name:    "zero token counter keeps all",

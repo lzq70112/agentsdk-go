@@ -430,12 +430,17 @@ func (rt *Runtime) executeSkills(ctx context.Context, prompt string, activation 
 		if err != nil {
 			return execs, "", err
 		}
-		prefix = combinePrompt(prefix, res.Output)
+		if text, ok := skillOutputText(res.Output); ok {
+			prefix = combinePrompt(prefix, text)
+		}
 		activation.Metadata = mergeMetadata(activation.Metadata, res.Metadata)
 		mergeTags(req, res.Metadata)
 		applyCommandMetadata(req, res.Metadata)
 	}
 	prompt = prependPrompt(prompt, prefix)
+	if metaJSON, err := json.Marshal(activation.Metadata); err == nil {
+		log.Printf("[api:executeSkills] applyPromptMetadata metadata: %s", metaJSON)
+	}
 	prompt = applyPromptMetadata(prompt, activation.Metadata)
 	return execs, prompt, nil
 }
@@ -528,6 +533,9 @@ func (rt *Runtime) executeSubagent(ctx context.Context, prompt string, activatio
 	if strings.TrimSpace(text) != "" {
 		prompt = strings.TrimSpace(text)
 	}
+	if metaJSON, err := json.Marshal(res.Metadata); err == nil {
+		log.Printf("[api:executeSubagent] applyPromptMetadata metadata: %s", metaJSON)
+	}
 	prompt = applyPromptMetadata(prompt, res.Metadata)
 	mergeTags(req, res.Metadata)
 	applyCommandMetadata(req, res.Metadata)
@@ -569,4 +577,16 @@ func (rt *Runtime) newTrimmer() *message.Trimmer {
 		return nil
 	}
 	return message.NewTrimmer(rt.opts.TokenLimit, nil)
+}
+
+func skillOutputText(output any) (string, bool) {
+	if output == nil {
+		return "", false
+	}
+	if m, ok := output.(map[string]any); ok {
+		if body, ok := m["body"].(string); ok {
+			return strings.TrimSpace(body), true
+		}
+	}
+	return anyToString(output)
 }

@@ -41,6 +41,20 @@ func TestApplyPromptMetadataOverride(t *testing.T) {
 	}
 }
 
+func TestApplyPromptMetadataIgnoresEmptyOverride(t *testing.T) {
+	meta := map[string]any{"api.prompt_override": ""}
+	result := applyPromptMetadata("body", meta)
+	if result != "body" {
+		t.Fatalf("expected empty override ignored, got %q", result)
+	}
+
+	meta = map[string]any{"api.prompt_override": "   "}
+	result = applyPromptMetadata("body", meta)
+	if result != "body" {
+		t.Fatalf("expected whitespace override ignored, got %q", result)
+	}
+}
+
 func TestOrderedForcedSkills(t *testing.T) {
 	reg := skills.NewRegistry()
 	if err := reg.Register(skills.Definition{Name: "alpha"}, skills.HandlerFunc(func(context.Context, skills.ActivationContext) (skills.Result, error) {
@@ -409,6 +423,34 @@ func TestAnyToStringCoversStringer(t *testing.T) {
 	val, ok = anyToString(fakeStringer{text: "  custom  "})
 	if !ok || val != "custom" {
 		t.Fatalf("expected stringer conversion, got %q", val)
+	}
+}
+
+func TestSkillOutputText(t *testing.T) {
+	tests := []struct {
+		name   string
+		output any
+		want   string
+		wantOK bool
+	}{
+		{"nil", nil, "", false},
+		{"string", "plain text", "plain text", true},
+		{"map body", map[string]any{"body": "skill body"}, "skill body", true},
+		{"map body trimmed", map[string]any{"body": "  skill body  "}, "skill body", true},
+		{"map missing body", map[string]any{"other": "value"}, "map[other:value]", true},
+		{"map body non-string", map[string]any{"body": 123}, "map[body:123]", true},
+		{"int fallback", 123, "123", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := skillOutputText(tt.output)
+			if ok != tt.wantOK {
+				t.Fatalf("skillOutputText(%v) ok = %v, want %v", tt.output, ok, tt.wantOK)
+			}
+			if got != tt.want {
+				t.Fatalf("skillOutputText(%v) = %q, want %q", tt.output, got, tt.want)
+			}
+		})
 	}
 }
 

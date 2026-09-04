@@ -13,7 +13,7 @@ func applyPromptMetadata(prompt string, meta map[string]any) string {
 	if len(meta) == 0 {
 		return prompt
 	}
-	if text, ok := anyToString(meta["api.prompt_override"]); ok {
+	if text, ok := anyToString(meta["api.prompt_override"]); ok && text != "" {
 		prompt = text
 	}
 	if text, ok := anyToString(meta["api.prepend_prompt"]); ok {

@@ -303,6 +303,32 @@ func TestConvertMessagesToOpenAI(t *testing.T) {
 			},
 			wantLen: 1, // with placeholder
 		},
+		{
+			name: "system and assistant only adds placeholder user",
+			msgs: []Message{
+				{Role: "system", Content: "Be concise"},
+				{Role: "assistant", Content: "Hello"},
+			},
+			wantLen: 3, // system + assistant + placeholder user
+		},
+		{
+			name: "tool result without user adds placeholder user",
+			msgs: []Message{
+				{Role: "assistant", ToolCalls: []ToolCall{{ID: "call_1", Name: "tool1"}}},
+				{Role: "tool", ToolCalls: []ToolCall{{ID: "call_1", Result: "result data"}}},
+			},
+			wantLen: 3, // assistant + tool + placeholder user
+		},
+		{
+			name: "multiple system contents merge into one",
+			msgs: []Message{
+				{Role: "system", Content: "inline system"},
+				{Role: "user", Content: "Hello"},
+				{Role: "assistant", Content: "Hi"},
+			},
+			defaults: []string{"default system"},
+			wantLen:  3, // merged system + user + assistant
+		},
 	}
 
 	for _, tt := range tests {
@@ -319,10 +345,11 @@ func TestConvertMessagesToOpenAI_AssistantToolCallNilArgumentsUsesEmptyObject(t 
 	}
 
 	out := convertMessagesToOpenAI(msgs)
-	require.Len(t, out, 1)
+	require.Len(t, out, 2)
 	require.NotNil(t, out[0].OfAssistant)
 	require.Len(t, out[0].OfAssistant.ToolCalls, 1)
 	assert.Equal(t, "{}", out[0].OfAssistant.ToolCalls[0].Function.Arguments)
+	require.NotNil(t, out[1].OfUser)
 }
 
 func TestConvertMessagesToOpenAI_PreservesUserWhitespace(t *testing.T) {
@@ -335,6 +362,19 @@ func TestConvertMessagesToOpenAI_PreservesUserWhitespace(t *testing.T) {
 		t.Fatalf("expected one user message, got %+v", result)
 	}
 	assert.Equal(t, "  keep leading and trailing spaces  ", result[0].OfUser.Content.OfString.Value)
+}
+
+func TestConvertMessagesToOpenAI_MergesMultipleSystemContents(t *testing.T) {
+	msgs := []Message{
+		{Role: "system", Content: "inline system"},
+		{Role: "user", Content: "Hello"},
+	}
+
+	result := convertMessagesToOpenAI(msgs, "default system")
+	require.Len(t, result, 2)
+	require.NotNil(t, result[0].OfSystem)
+	assert.Equal(t, "default system\n\ninline system", result[0].OfSystem.Content.OfString.Value)
+	require.NotNil(t, result[1].OfUser)
 }
 
 func TestConvertToolsToOpenAI(t *testing.T) {
