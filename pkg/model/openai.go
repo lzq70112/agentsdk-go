@@ -49,6 +49,22 @@ const (
 	defaultOpenAIMaxRetries = 10
 )
 
+// normalizeOpenAIBaseURL ensures OpenAI-compatible endpoints receive a BaseURL
+// ending with "/v1/". Without the trailing slash, openai-go resolves relative
+// paths like "chat/completions" against the final path segment, producing
+// "/chat/completions" instead of the required "/v1/chat/completions".
+func normalizeOpenAIBaseURL(baseURL string) string {
+	baseURL = strings.TrimSpace(baseURL)
+	if baseURL == "" {
+		return ""
+	}
+	baseURL = strings.TrimRight(baseURL, "/")
+	if strings.HasSuffix(baseURL, "/v1") {
+		return baseURL + "/"
+	}
+	return baseURL + "/v1/"
+}
+
 // NewOpenAI constructs a production-ready OpenAI-backed Model.
 func NewOpenAI(cfg OpenAIConfig) (Model, error) {
 	apiKey := strings.TrimSpace(cfg.APIKey)
@@ -59,8 +75,8 @@ func NewOpenAI(cfg OpenAIConfig) (Model, error) {
 	opts := []option.RequestOption{
 		option.WithAPIKey(apiKey),
 	}
-	if cfg.BaseURL != "" {
-		opts = append(opts, option.WithBaseURL(cfg.BaseURL))
+	if baseURL := normalizeOpenAIBaseURL(cfg.BaseURL); baseURL != "" {
+		opts = append(opts, option.WithBaseURL(baseURL))
 	}
 	if cfg.HTTPClient != nil {
 		opts = append(opts, option.WithHTTPClient(cfg.HTTPClient))
@@ -440,10 +456,18 @@ func openAIImageURL(block ContentBlock) string {
 func buildOpenAIAssistantMessage(msg Message) openai.ChatCompletionMessageParamUnion {
 	assistantParam := openai.ChatCompletionAssistantMessageParam{}
 
-	// Set content
+	// Set content. When the assistant has tool calls and no explicit content,
+	// leave content empty; some OpenAI-compatible models (GLM/Qwen/Kimi) reject
+	// assistant messages that carry both content and tool_calls. Otherwise pad
+	// empty content with a zero-width space so models do not reject a message
+	// with no content at all.
 	content := msg.Content
 	if strings.TrimSpace(content) == "" {
-		content = "\u200b"
+		if len(msg.ToolCalls) > 0 {
+			content = ""
+		} else {
+			content = "\u200b"
+		}
 	}
 	assistantParam.Content = openai.ChatCompletionAssistantMessageParamContentUnion{
 		OfString: openai.String(content),
@@ -545,9 +569,14 @@ func convertToFunctionParameters(params map[string]any) shared.FunctionParameter
 		}
 	}
 
-	// Ensure type is set
+	// Ensure type is set. Drop fields that many OpenAI-compatible endpoints
+	// (GLM/Qwen/Kimi) do not support and that cause request-level errors:
+	// strict mode and explicit additionalProperties: false.
 	result := make(shared.FunctionParameters, len(params)+1)
 	for k, v := range params {
+		if k == "strict" || k == "additionalProperties" {
+			continue
+		}
 		result[k] = v
 	}
 	if _, ok := result["type"]; !ok {
