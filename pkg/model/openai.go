@@ -364,13 +364,13 @@ func (m *openaiModel) selectModel(override string) string {
 }
 
 func convertMessagesToOpenAI(msgs []Message, defaults ...string) []openai.ChatCompletionMessageParamUnion {
-	var systemMessages []openai.ChatCompletionMessageParamUnion
+	var systemContents []string
 	var otherMessages []openai.ChatCompletionMessageParamUnion
 
 	// Collect system messages from defaults first.
 	for _, sys := range defaults {
 		if trimmed := strings.TrimSpace(sys); trimmed != "" {
-			systemMessages = append(systemMessages, openai.SystemMessage(trimmed))
+			systemContents = append(systemContents, trimmed)
 		}
 	}
 
@@ -379,7 +379,7 @@ func convertMessagesToOpenAI(msgs []Message, defaults ...string) []openai.ChatCo
 		switch role {
 		case "system":
 			if trimmed := strings.TrimSpace(msg.Content); trimmed != "" {
-				systemMessages = append(systemMessages, openai.SystemMessage(trimmed))
+				systemContents = append(systemContents, trimmed)
 			}
 		case "assistant":
 			otherMessages = append(otherMessages, buildOpenAIAssistantMessage(msg))
@@ -405,12 +405,34 @@ func convertMessagesToOpenAI(msgs []Message, defaults ...string) []openai.ChatCo
 		}
 	}
 
+	var systemMessages []openai.ChatCompletionMessageParamUnion
+	if len(systemContents) > 0 {
+		systemMessages = append(systemMessages, openai.SystemMessage(strings.Join(systemContents, "\n\n")))
+	}
+
 	result := append(systemMessages, otherMessages...)
 	if len(result) == 0 {
+		result = append(result, openai.UserMessage("\u200b"))
+		return result
+	}
+
+	// Defense-in-depth: some OpenAI-compatible endpoints reject requests that
+	// contain only system/assistant/tool messages. Ensure at least one user
+	// message is present.
+	if !hasUserMessage(result) {
 		result = append(result, openai.UserMessage("\u200b"))
 	}
 
 	return result
+}
+
+func hasUserMessage(msgs []openai.ChatCompletionMessageParamUnion) bool {
+	for _, msg := range msgs {
+		if msg.OfUser != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func buildOpenAIUserContentParts(msg Message) []openai.ChatCompletionContentPartUnionParam {

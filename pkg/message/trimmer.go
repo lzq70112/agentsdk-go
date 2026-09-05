@@ -1,5 +1,7 @@
 package message
 
+import "strings"
+
 // TokenCounter returns an estimated token cost for a message.
 type TokenCounter interface {
 	Count(msg Message) int
@@ -70,6 +72,11 @@ func NewTrimmer(limit int, counter TokenCounter) *Trimmer {
 
 // Trim returns a trimmed copy of messages that fits within the token limit. If
 // the limit is zero or negative an empty slice is returned.
+//
+// The newest user message (the current query) is always preserved, along with
+// the newest messages that follow it. Older messages are kept only while they
+// fit within the remaining budget. This prevents token-constrained compaction
+// from dropping the user's current question.
 func (t *Trimmer) Trim(history []Message) []Message {
 	if t == nil || t.MaxTokens <= 0 {
 		return []Message{}
@@ -80,6 +87,47 @@ func (t *Trimmer) Trim(history []Message) []Message {
 		counter = NaiveCounter{}
 	}
 
+	// Find the newest user message. If there is none, fall back to keeping the
+	// newest messages from the end of the history.
+	newestUserIdx := -1
+	for i := len(history) - 1; i >= 0; i-- {
+		if strings.EqualFold(strings.TrimSpace(history[i].Role), "user") {
+			newestUserIdx = i
+			break
+		}
+	}
+	if newestUserIdx < 0 {
+		return t.trimFromEnd(history, counter)
+	}
+
+	tokens := 0
+	kept := make([]Message, 0, len(history)-newestUserIdx)
+
+	// Preserve the newest user query and every message after it, stopping when
+	// a non-user message no longer fits. The user query itself is always kept
+	// so that the model never receives a conversation with no current question.
+	for i := newestUserIdx; i < len(history); i++ {
+		cost := counter.Count(history[i])
+		if tokens+cost > t.MaxTokens && i > newestUserIdx {
+			break
+		}
+		kept = append(kept, CloneMessage(history[i]))
+		tokens += cost
+	}
+
+	// Fill remaining budget with older messages in chronological order.
+	for i := newestUserIdx - 1; i >= 0; i-- {
+		cost := counter.Count(history[i])
+		if tokens+cost > t.MaxTokens {
+			break
+		}
+		kept = append([]Message{CloneMessage(history[i])}, kept...)
+		tokens += cost
+	}
+	return kept
+}
+
+func (t *Trimmer) trimFromEnd(history []Message, counter TokenCounter) []Message {
 	tokens := 0
 	kept := make([]Message, 0, len(history))
 	for i := len(history) - 1; i >= 0; i-- {

@@ -307,16 +307,16 @@ func TestOpenAIProvider_SystemMessagesAlwaysFirst(t *testing.T) {
 
 	messages, ok := receivedBody["messages"].([]any)
 	require.True(t, ok)
-	require.Len(t, messages, 5)
+	require.Len(t, messages, 3)
 
 	// All system messages must precede any user/assistant messages. Some
 	// OpenAI-compatible endpoints (GLM/Qwen/Kimi/MiniMax) reject requests where
-	// a system message appears after a user or assistant message.
+	// a system message appears after a user or assistant message. To keep the
+	// request compatible, multiple system contents are merged into a single
+	// system message at the beginning.
 	assert.Equal(t, "system", getMessageRole(messages[0]))
-	assert.Equal(t, "system", getMessageRole(messages[1]))
-	assert.Equal(t, "system", getMessageRole(messages[2]))
-	assert.Equal(t, "user", getMessageRole(messages[3]))
-	assert.Equal(t, "assistant", getMessageRole(messages[4]))
+	assert.Equal(t, "user", getMessageRole(messages[1]))
+	assert.Equal(t, "assistant", getMessageRole(messages[2]))
 }
 
 func getMessageRole(msg any) string {
