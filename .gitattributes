@@ -1,1 +1,36 @@
-* text=auto eol=lf
+# 文本文件自动处理换行符，未匹配到的二进制文件保持不变
+* text=auto
+
+# Go 源码与模块文件强制使用 LF
+*.go text eol=lf
+*.mod text eol=lf
+*.sum text eol=lf
+
+# 配置文件强制使用 LF
+*.yaml text eol=lf
+*.yml text eol=lf
+*.json text eol=lf
+*.toml text eol=lf
+
+# 文档强制使用 LF（含 skill 描述文件）
+*.md text eol=lf
+
+# 脚本强制使用 LF
+*.sh text eol=lf
+
+# 前端文件强制使用 LF
+*.js text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+
+# 无扩展名配置文件强制使用 LF
+.gitattributes text eol=lf
+.gitignore text eol=lf
+.editorconfig text eol=lf
+.dockerignore text eol=lf
+LICENSE text eol=lf
+
+# Makefile / Dockerfile 强制使用 LF
+Makefile text eol=lf
+dockerfile text eol=lf
+Dockerfile text eol=lf
