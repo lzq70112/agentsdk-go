@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -40,5 +41,27 @@ func TestReadFileOverrideOrOS(t *testing.T) {
 	data, err = readFileOverrideOrOS(path)
 	if err != nil || string(data) != "data" {
 		t.Fatalf("expected fallback read, got %q err=%v", data, err)
+	}
+}
+
+func TestLoadFromFSRespectsDisableAutoActivation(t *testing.T) {
+	root := t.TempDir()
+	skillPath := filepath.Join(root, ".agents", "skills", "manual", "SKILL.md")
+	content := strings.Join([]string{
+		"---",
+		"name: manual",
+		"description: only via tool",
+		"disable-auto-activation: true",
+		"---",
+		"body",
+	}, "\n")
+	mustWrite(t, skillPath, content)
+
+	regs, errs := LoadFromFS(LoaderOptions{ProjectRoot: root})
+	if len(errs) != 0 || len(regs) != 1 {
+		t.Fatalf("unexpected load result regs=%v errs=%v", regs, errs)
+	}
+	if !regs[0].Definition.DisableAutoActivation {
+		t.Fatalf("expected DisableAutoActivation=true, got %+v", regs[0].Definition)
 	}
 }

@@ -120,14 +120,15 @@ func (t *ToolList) UnmarshalYAML(value *yaml.Node) error {
 }
 
 type SkillMetadata struct {
-	Name          string            `yaml:"name"`
-	Description   string            `yaml:"description"`
-	WhenToUse     string            `yaml:"when_to_use,omitempty"`
-	License       string            `yaml:"license,omitempty"`
-	Compatibility string            `yaml:"compatibility,omitempty"`
-	Metadata      map[string]string `yaml:"metadata,omitempty"`
-	AllowedTools  ToolList          `yaml:"allowed-tools,omitempty"`
-	Paths         []string          `yaml:"paths,omitempty"`
+	Name                  string            `yaml:"name"`
+	Description           string            `yaml:"description"`
+	WhenToUse             string            `yaml:"when_to_use,omitempty"`
+	License               string            `yaml:"license,omitempty"`
+	Compatibility         string            `yaml:"compatibility,omitempty"`
+	Metadata              map[string]string `yaml:"metadata,omitempty"`
+	AllowedTools          ToolList          `yaml:"allowed-tools,omitempty"`
+	Paths                 []string          `yaml:"paths,omitempty"`
+	DisableAutoActivation bool              `yaml:"disable-auto-activation,omitempty"`
 }
 
 type SkillRegistration struct {
@@ -198,6 +199,7 @@ func skillFileToRegistration(file SkillFile) SkillRegistration {
 		Description: skillDisplayDescription(file.Metadata),
 		Metadata:    buildDefinitionMetadata(file),
 	}
+	def.DisableAutoActivation = file.Metadata.DisableAutoActivation
 	if len(file.Metadata.Paths) > 0 {
 		def.Matchers = append(def.Matchers, PathMatcher{Patterns: append([]string(nil), file.Metadata.Paths...)})
 	}

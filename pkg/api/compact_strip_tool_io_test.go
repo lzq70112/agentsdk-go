@@ -85,8 +85,8 @@ func TestCompactor_StripsToolIOFromCompressionInput(t *testing.T) {
 	}
 
 	snapshot := hist.All()
-	if len(snapshot) == 0 || snapshot[0].Role != "system" || !strings.Contains(snapshot[0].Content, "## Summary") {
-		t.Fatalf("expected system summary message after compaction, got %+v", snapshot)
+	if len(snapshot) == 0 || snapshot[0].Role != "assistant" || !strings.Contains(snapshot[0].Content, "## Summary") {
+		t.Fatalf("expected assistant summary message after compaction, got %+v", snapshot)
 	}
 }
 
