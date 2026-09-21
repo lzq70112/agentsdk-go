@@ -27,7 +27,7 @@ func TestRuntimePrepare_PrecheckCompactsHistory(t *testing.T) {
 	if len(got) != 3 {
 		t.Fatalf("expected compacted history len=3, got len=%d msgs=%+v", len(got), got)
 	}
-	if got[0].Role != "system" {
+	if got[0].Role != "assistant" {
 		t.Fatalf("expected summary message first, got %+v", got[0])
 	}
 	if got[1].Role != "user" || got[1].Content != "hello" {

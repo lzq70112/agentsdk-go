@@ -66,8 +66,8 @@ func TestCompactorMaybeCompact(t *testing.T) {
 	if len(msgs) != 2 {
 		t.Fatalf("expected compacted history len=2, got %d", len(msgs))
 	}
-	if msgs[0].Role != "system" || !strings.Contains(msgs[0].Content, "summary") {
-		t.Fatalf("expected summary system message, got %+v", msgs[0])
+	if msgs[0].Role != "assistant" || !strings.Contains(msgs[0].Content, "summary") {
+		t.Fatalf("expected summary assistant message, got %+v", msgs[0])
 	}
 	if msgs[1].Role != "user" || msgs[1].Content != "three" {
 		t.Fatalf("expected preserved tail, got %+v", msgs[1])

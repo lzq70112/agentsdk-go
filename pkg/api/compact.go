@@ -138,8 +138,10 @@ func (c *compactor) maybeCompact(ctx context.Context, hist *message.History, mdl
 	}
 
 	out := make([]message.Message, 0, 1+len(snapshot[cut:]))
+	// 摘要不能作为 system 消息，否则会和真正的 system prompt 在 provider 层合并，
+	// 导致系统提示词被稀释/覆盖。使用 assistant 角色作为历史摘要保留。
 	out = append(out, message.Message{
-		Role:    "system",
+		Role:    "assistant",
 		Content: "## Summary\n\n" + summary,
 	})
 	out = append(out, snapshot[cut:]...)
