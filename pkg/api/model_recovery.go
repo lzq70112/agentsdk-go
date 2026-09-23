@@ -65,7 +65,8 @@ func (rt *Runtime) completeOnce(ctx context.Context, mdl model.Model, req model.
 	if tracer != nil {
 		modelSpan = tracer.StartModelSpan(agentSpan, strings.TrimSpace(req.Model))
 	}
-	resp, err := completeViaStream(ctx, mdl, req, rt.opts.StreamStall.withDefaults(), streamEmitFromContext(ctx) != nil)
+	resp, err := completeViaStream(ctx, mdl, req, rt.opts.StreamStall.withDefaults(), streamEmitFromContext(ctx) != nil,
+		strings.TrimSpace(normalized.SessionID), strings.TrimSpace(normalized.RequestID))
 	if tracer != nil {
 		attrs := map[string]any{
 			"session_id": strings.TrimSpace(normalized.SessionID),
@@ -82,31 +83,38 @@ func (rt *Runtime) completeOnce(ctx context.Context, mdl model.Model, req model.
 	return resp, err
 }
 
-func completeViaStream(ctx context.Context, mdl model.Model, req model.Request, cfg StreamStallConfig, detectStall bool) (*model.Response, error) {
+func completeViaStream(ctx context.Context, mdl model.Model, req model.Request, cfg StreamStallConfig, detectStall bool, sessionID, requestID string) (*model.Response, error) {
 	if !detectStall {
-		return collectStreamResponse(ctx, mdl, req)
+		return collectStreamResponse(ctx, mdl, req, sessionID, requestID)
 	}
 	cfg = cfg.withDefaults()
 	if !cfg.FallbackEnabled {
-		return collectStreamWithTimeout(ctx, mdl, req, cfg.Timeout)
+		return collectStreamWithTimeout(ctx, mdl, req, cfg.Timeout, sessionID, requestID)
 	}
 
-	resp, err := collectStreamWithTimeout(ctx, mdl, req, cfg.Timeout)
-	if !errors.Is(err, ErrStreamStall) {
+	resp, err := collectStreamWithTimeout(ctx, mdl, req, cfg.Timeout, sessionID, requestID)
+	if err != nil {
+		if errors.Is(err, ErrStreamStall) {
+			runtimeLogger.printf("[model] session=%s request=%s stream stall detected, fallback to non-streaming", sessionID, requestID)
+			resp, err = mdl.Complete(ctx, req)
+		}
+		if err != nil {
+			runtimeLogger.warnf("[model] session=%s request=%s request failed: %v", sessionID, requestID, err)
+		}
 		return resp, err
 	}
-	return mdl.Complete(ctx, req)
+	return resp, nil
 }
 
-func collectStreamResponse(ctx context.Context, mdl model.Model, req model.Request) (*model.Response, error) {
-	outcome := runStreamCollection(ctx, mdl, req, nil)
+func collectStreamResponse(ctx context.Context, mdl model.Model, req model.Request, sessionID, requestID string) (*model.Response, error) {
+	outcome := runStreamCollection(ctx, mdl, req, nil, sessionID, requestID)
 	if outcome.err != nil {
 		return nil, outcome.err
 	}
 	return outcome.resp, nil
 }
 
-func collectStreamWithTimeout(ctx context.Context, mdl model.Model, req model.Request, timeout time.Duration) (*model.Response, error) {
+func collectStreamWithTimeout(ctx context.Context, mdl model.Model, req model.Request, timeout time.Duration, sessionID, requestID string) (*model.Response, error) {
 	if timeout <= 0 {
 		timeout = defaultStreamStallTimeout
 	}
@@ -117,7 +125,7 @@ func collectStreamWithTimeout(ctx context.Context, mdl model.Model, req model.Re
 
 	done := make(chan streamOutcome, 1)
 	go func() {
-		done <- runStreamCollection(streamCtx, mdl, req, progress)
+		done <- runStreamCollection(streamCtx, mdl, req, progress, sessionID, requestID)
 	}()
 
 	timer := time.NewTimer(timeout)
@@ -156,7 +164,7 @@ func collectStreamWithTimeout(ctx context.Context, mdl model.Model, req model.Re
 	}
 }
 
-func runStreamCollection(ctx context.Context, mdl model.Model, req model.Request, progress chan<- struct{}) streamOutcome {
+func runStreamCollection(ctx context.Context, mdl model.Model, req model.Request, progress chan<- struct{}, sessionID, requestID string) streamOutcome {
 	var final *model.Response
 	err := mdl.CompleteStream(ctx, req, func(sr model.StreamResult) error {
 		if progress != nil {

@@ -212,7 +212,7 @@ func TestCollectStreamResponseNoEmitUnchanged(t *testing.T) {
 	}
 	// 普通 context，不带 streamEmit / forwarded 标记。
 	ctx := context.Background()
-	resp, err := collectStreamResponse(ctx, mdl, model.Request{})
+	resp, err := collectStreamResponse(ctx, mdl, model.Request{}, "", "")
 	if err != nil {
 		t.Fatalf("collectStreamResponse: %v", err)
 	}
@@ -233,7 +233,7 @@ func TestRunStreamForwardsDeltaWithToolCalls(t *testing.T) {
 	mdl := &multiCallDeltaModel{
 		deltas: []string{"calling ", "tool"},
 		first: &model.Response{Message: model.Message{
-			Role: "assistant",
+			Role:    "assistant",
 			Content: "calling tool",
 			ToolCalls: []model.ToolCall{{
 				ID: "tc_1", Name: echo.Name(), Arguments: map[string]any{"text": "hi"},

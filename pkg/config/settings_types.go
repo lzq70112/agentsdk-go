@@ -32,6 +32,7 @@ type Settings struct {
 	AWSAuthRefresh       string             `json:"awsAuthRefresh,omitempty"`       // Script to refresh AWS SSO credentials.
 	AWSCredentialExport  string             `json:"awsCredentialExport,omitempty"`  // Script that prints JSON AWS credentials.
 	RespectGitignore     *bool              `json:"respectGitignore,omitempty"`     // Whether Glob/Grep tools should respect .gitignore patterns.
+	StreamStall          *StreamStallConfig `json:"streamStall,omitempty"`          // Streaming stall detection and fallback behaviour.
 }
 
 // PermissionsConfig defines per-tool permission rules.
@@ -141,6 +142,13 @@ type StatusLineConfig struct {
 	Template        string `json:"template,omitempty"`        // Text template when Type=template.
 	IntervalSeconds int    `json:"intervalSeconds,omitempty"` // Optional refresh interval in seconds.
 	TimeoutSeconds  int    `json:"timeoutSeconds,omitempty"`  // Optional timeout for the command run.
+}
+
+// StreamStallConfig controls streaming stall detection and non-streaming fallback.
+// A duration string uses Go's time.ParseDuration format, e.g. "60s", "5m".
+type StreamStallConfig struct {
+	Timeout         string `json:"timeout,omitempty"`          // How long to wait without new chunks before treating the stream as stalled.
+	FallbackEnabled *bool  `json:"fallback_enabled,omitempty"` // Whether to retry the request as non-streaming after a stall.
 }
 
 // GetDefaultSettings returns Anthropic's documented defaults.

@@ -31,6 +31,7 @@ examples/http/http
 **/.agents/settings.local.json
 **/.agents/history/
 **/.agents/state/
+**/.agents/logs/
 **/.http-trace/
 
 tools.json

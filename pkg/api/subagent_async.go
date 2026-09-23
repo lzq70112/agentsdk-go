@@ -1,7 +1,6 @@
 package api
 
 import (
-	"log"
 	"strings"
 
 	hooks "github.com/lzq70112/agentsdk-go/pkg/hooks"
@@ -36,7 +35,7 @@ func (rt *Runtime) handleSubagentCompletion(status subagents.Status) {
 			SessionID: strings.TrimSpace(status.SessionID),
 			Payload:   payload,
 		}); err != nil {
-			log.Printf("hooks: subagent completion publish failed: %v", err)
+			runtimeLogger.warnf("hooks: subagent completion publish failed: %v", err)
 		}
 	}
 	if rt.opts.DisableSubagentSummary || rt.histories == nil {

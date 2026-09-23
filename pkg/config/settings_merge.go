@@ -65,6 +65,7 @@ func MergeSettings(lower, higher *Settings) *Settings {
 	if higher.AWSCredentialExport != "" {
 		result.AWSCredentialExport = higher.AWSCredentialExport
 	}
+	result.StreamStall = mergeStreamStall(lower.StreamStall, higher.StreamStall)
 	return result
 }
 
@@ -321,6 +322,26 @@ func mergeStatusLine(lower, higher *StatusLineConfig) *StatusLineConfig {
 	return out
 }
 
+func mergeStreamStall(lower, higher *StreamStallConfig) *StreamStallConfig {
+	if lower == nil && higher == nil {
+		return nil
+	}
+	if lower == nil {
+		return cloneStreamStall(higher)
+	}
+	if higher == nil {
+		return cloneStreamStall(lower)
+	}
+	out := cloneStreamStall(lower)
+	if higher.Timeout != "" {
+		out.Timeout = higher.Timeout
+	}
+	if higher.FallbackEnabled != nil {
+		out.FallbackEnabled = boolPtr(*higher.FallbackEnabled)
+	}
+	return out
+}
+
 func mergeMCPConfig(lower, higher *MCPConfig) *MCPConfig {
 	if lower == nil && higher == nil {
 		return nil
@@ -375,6 +396,7 @@ func cloneSettings(src *Settings) *Settings {
 	out.DeniedMcpServers = mergeMCPServerRules(nil, src.DeniedMcpServers)
 	out.MCP = cloneMCPConfig(src.MCP)
 	out.LegacyMCPServers = mergeStringSlices(nil, src.LegacyMCPServers)
+	out.StreamStall = cloneStreamStall(src.StreamStall)
 	return &out
 }
 
@@ -495,6 +517,15 @@ func cloneStatusLine(src *StatusLineConfig) *StatusLineConfig {
 		return nil
 	}
 	out := *src
+	return &out
+}
+
+func cloneStreamStall(src *StreamStallConfig) *StreamStallConfig {
+	if src == nil {
+		return nil
+	}
+	out := *src
+	out.FallbackEnabled = cloneBoolPtr(src.FallbackEnabled)
 	return &out
 }
 

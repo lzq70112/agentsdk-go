@@ -180,6 +180,8 @@ type Options struct {
 	Sandbox          SandboxOptions
 	AutoCompact      CompactConfig
 	OTEL             OTELConfig
+	LogDir           string // directory for runtime logs; empty disables file logging (typical: <ProjectRoot>/.agents/logs)
+	Verbose          bool   // when true, routine logs are also mirrored to stderr
 	fsLayer          *config.FS
 	settingsSnapshot *config.Settings
 	skReg            *skills.Registry
@@ -263,6 +265,18 @@ func WithMaxSessions(n int) func(*Options) {
 func WithAutoCompact(config CompactConfig) func(*Options) {
 	return func(o *Options) {
 		o.AutoCompact = config
+	}
+}
+
+func WithLogDir(dir string) func(*Options) {
+	return func(o *Options) {
+		o.LogDir = dir
+	}
+}
+
+func WithVerbose(verbose bool) func(*Options) {
+	return func(o *Options) {
+		o.Verbose = verbose
 	}
 }
 

@@ -104,7 +104,12 @@ func (c *compactor) maybeCompact(ctx context.Context, hist *message.History, mdl
 	msgCount := hist.Len()
 	tokenCount := hist.TokenCount()
 	overhead := estimateStringTokens(systemPrompt) + estimateToolTokens(tools)
+	runtimeLogger.printf("[compact] check msgs=%d tokens=%d overhead=%d limit=%d ratio=%.2f",
+		msgCount, tokenCount, overhead, c.limit, float64(tokenCount+overhead)/float64(c.limit))
 	if !c.shouldCompact(msgCount, tokenCount, overhead) {
+		if didMicroCompact {
+			runtimeLogger.printf("[micro-compact] executed: msgs=%d", msgCount)
+		}
 		return didMicroCompact, nil
 	}
 	if mdl == nil {
@@ -146,6 +151,7 @@ func (c *compactor) maybeCompact(ctx context.Context, hist *message.History, mdl
 	})
 	out = append(out, snapshot[cut:]...)
 	hist.Replace(out)
+	runtimeLogger.printf("[compact] executed: before=%d after=%d summaryChars=%d", len(snapshot), len(out), len(summary))
 	return true, nil
 }
 

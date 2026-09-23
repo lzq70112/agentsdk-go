@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"maps"
 	"strings"
 
@@ -241,9 +240,22 @@ func (rt *Runtime) runLoop(prep preparedRun, mdl model.Model, hookAdapter *runti
 			System:            systemPrompt,
 			EnablePromptCache: enableCache,
 		}
-		if msgsJSON, err := json.Marshal(req.Messages); err == nil {
-			log.Printf("[api:runLoop] model request messages (iteration=%d): %s", iteration, msgsJSON)
+		inputChars := 0
+		for _, m := range req.Messages {
+			inputChars += len(m.Content) + len(m.ReasoningContent)
+			for _, b := range m.ContentBlocks {
+				inputChars += len(b.Text)
+			}
+			for _, tc := range m.ToolCalls {
+				inputChars += len(tc.Name)
+				if args, err := json.Marshal(tc.Arguments); err == nil {
+					inputChars += len(args)
+				}
+			}
 		}
+		runtimeLogger.printf("[api:runLoop] session=%s request=%s iteration=%d messages=%d tools=%d inputChars=%d estTokens=%d",
+			strings.TrimSpace(prep.normalized.SessionID), strings.TrimSpace(prep.normalized.RequestID),
+			iteration, len(req.Messages), len(req.Tools), inputChars, inputChars/3)
 		state.ModelInput = &req
 		state.Values["model.request"] = req
 		if err := chain.Execute(ctx, middleware.StageBeforeAgent, state); err != nil {
@@ -271,6 +283,10 @@ func (rt *Runtime) runLoop(prep preparedRun, mdl model.Model, hookAdapter *runti
 		state.Values["model.response"] = resp
 		state.Values["model.usage"] = resp.Usage
 		state.Values["model.stop_reason"] = resp.StopReason
+		runtimeLogger.printf("[api:runLoop] session=%s request=%s iteration=%d outputTokens=%d inputTokens=%d stopReason=%s outputChars=%d",
+			strings.TrimSpace(prep.normalized.SessionID), strings.TrimSpace(prep.normalized.RequestID),
+			iteration, resp.Usage.OutputTokens, resp.Usage.InputTokens, resp.StopReason,
+			len(strings.TrimSpace(resp.Message.Content))+len(resp.Message.ReasoningContent))
 		stopErr := budgetTracker.Observe(resp.Usage)
 
 		assistant := message.Message{
@@ -428,6 +444,7 @@ func (rt *Runtime) executeSkills(ctx context.Context, prompt string, activation 
 		res, err := skill.Execute(ctx, activation)
 		execs = append(execs, SkillExecution{Definition: skill.Definition(), Result: res, Err: err})
 		if err != nil {
+			runtimeLogger.warnf("[api:executeSkills] skill=%s failed: %v", name, err)
 			return execs, "", err
 		}
 		if text, ok := skillOutputText(res.Output); ok {
@@ -438,8 +455,10 @@ func (rt *Runtime) executeSkills(ctx context.Context, prompt string, activation 
 		applyCommandMetadata(req, res.Metadata)
 	}
 	prompt = prependPrompt(prompt, prefix)
-	if metaJSON, err := json.Marshal(activation.Metadata); err == nil {
-		log.Printf("[api:executeSkills] applyPromptMetadata metadata: %s", metaJSON)
+	if len(activation.Metadata) > 0 {
+		if metaJSON, err := json.Marshal(activation.Metadata); err == nil {
+			runtimeLogger.printf("[api:executeSkills] metadata %s", summarize("metadata", string(metaJSON), 200))
+		}
 	}
 	prompt = applyPromptMetadata(prompt, activation.Metadata)
 	return execs, prompt, nil
@@ -476,6 +495,7 @@ func (rt *Runtime) executeCollaborators(ctx context.Context, prompt string, acti
 			MaxConcurrency: req.TeamMaxConcurrency,
 		})
 		if err != nil {
+			runtimeLogger.warnf("[api:executeCollaborators] team dispatch failed: %v", err)
 			return nil, "", err
 		}
 		prompt = combineCollaboratorPrompt(prompt, res.Members)
@@ -527,14 +547,17 @@ func (rt *Runtime) executeSubagent(ctx context.Context, prompt string, activatio
 		if errors.Is(err, subagents.ErrNoMatchingSubagent) && req.TargetSubagent == "" {
 			return nil, prompt, nil
 		}
+		runtimeLogger.warnf("[api:executeSubagent] target=%s dispatch failed: %v", req.TargetSubagent, err)
 		return nil, "", err
 	}
 	text := fmt.Sprint(res.Output)
 	if strings.TrimSpace(text) != "" {
 		prompt = strings.TrimSpace(text)
 	}
-	if metaJSON, err := json.Marshal(res.Metadata); err == nil {
-		log.Printf("[api:executeSubagent] applyPromptMetadata metadata: %s", metaJSON)
+	if len(res.Metadata) > 0 {
+		if metaJSON, err := json.Marshal(res.Metadata); err == nil {
+			runtimeLogger.printf("[api:executeSubagent] metadata %s", summarize("metadata", string(metaJSON), 200))
+		}
 	}
 	prompt = applyPromptMetadata(prompt, res.Metadata)
 	mergeTags(req, res.Metadata)

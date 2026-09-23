@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/url"
 	"strings"
 	"time"
@@ -74,12 +73,12 @@ func registerTools(registry *tool.Registry, opts Options, settings *config.Setti
 		canon := canonicalToolName(name)
 		if disallowed != nil {
 			if _, blocked := disallowed[canon]; blocked {
-				log.Printf("tool %s skipped: disallowed", name)
+				runtimeLogger.printf("tool %s skipped: disallowed", name)
 				continue
 			}
 		}
 		if _, ok := seen[canon]; ok {
-			log.Printf("tool %s skipped: duplicate name", name)
+			runtimeLogger.printf("tool %s skipped: duplicate name", name)
 			continue
 		}
 		seen[canon] = struct{}{}
@@ -221,7 +220,12 @@ func effectiveEntryPoint(opts Options) EntryPoint {
 func registerMCPServers(ctx context.Context, registry *tool.Registry, manager *sandbox.Manager, servers []mcpServer) error {
 	for _, server := range servers {
 		spec := server.Spec
+		name := server.Name
+		if name == "" {
+			name = spec
+		}
 		if err := enforceSandboxHost(manager, spec); err != nil {
+			runtimeLogger.warnf("[mcp] name=%s spec=%s denied by sandbox: %v", name, spec, err)
 			return err
 		}
 		opts := tool.MCPServerOptions{
@@ -244,8 +248,11 @@ func registerMCPServers(ctx context.Context, registry *tool.Registry, manager *s
 			err = registry.RegisterMCPServerWithOptions(ctx, spec, server.Name, opts)
 		}
 		if err != nil {
+			runtimeLogger.warnf("[mcp] name=%s spec=%s timeout=%s toolTimeout=%s headers=%d register failed: %v",
+				name, spec, opts.Timeout, opts.ToolTimeout, len(opts.Headers), err)
 			return fmt.Errorf("api: register MCP %s: %w", spec, err)
 		}
+		runtimeLogger.printf("[mcp] name=%s spec=%s registered", name, spec)
 	}
 	return nil
 }

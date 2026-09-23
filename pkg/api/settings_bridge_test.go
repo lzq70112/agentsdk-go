@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/lzq70112/agentsdk-go/pkg/config"
 )
@@ -120,5 +121,44 @@ func TestLoadSettingsErrorsOnMissingExplicitOverlay(t *testing.T) {
 	opts := Options{ProjectRoot: root, SettingsPath: filepath.Join(root, "absent.json")}
 	if _, err := loadSettings(opts); err == nil {
 		t.Fatal("expected loadSettings to fail for missing overlay")
+	}
+}
+
+func streamStallBoolPtr(v bool) *bool { return &v }
+
+func TestApplyStreamStallFromSettings(t *testing.T) {
+	opts := Options{}.withDefaults()
+	if opts.StreamStall.Timeout != 60*time.Second {
+		t.Fatalf("unexpected default timeout %v", opts.StreamStall.Timeout)
+	}
+	if !opts.StreamStall.FallbackEnabled {
+		t.Fatalf("expected default fallback enabled")
+	}
+
+	settings := &config.Settings{
+		StreamStall: &config.StreamStallConfig{
+			Timeout:         "300s",
+			FallbackEnabled: streamStallBoolPtr(false),
+		},
+	}
+	merged := applyStreamStallFromSettings(opts, settings)
+	if merged.StreamStall.Timeout != 300*time.Second {
+		t.Fatalf("expected timeout 300s, got %v", merged.StreamStall.Timeout)
+	}
+	if merged.StreamStall.FallbackEnabled {
+		t.Fatalf("expected fallback disabled")
+	}
+
+	// Empty settings should leave defaults intact.
+	merged = applyStreamStallFromSettings(opts, &config.Settings{})
+	if merged.StreamStall.Timeout != 60*time.Second {
+		t.Fatalf("default timeout changed unexpectedly: %v", merged.StreamStall.Timeout)
+	}
+
+	// Invalid duration is ignored and logged; defaults are preserved.
+	settings.StreamStall.Timeout = "not-a-duration"
+	merged = applyStreamStallFromSettings(opts, settings)
+	if merged.StreamStall.Timeout != 60*time.Second {
+		t.Fatalf("invalid duration should not override default, got %v", merged.StreamStall.Timeout)
 	}
 }

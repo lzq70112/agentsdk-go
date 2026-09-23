@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"runtime"
 	"time"
 
@@ -101,7 +100,7 @@ func (t *runtimeToolExecutor) execute(ctx context.Context, call model.ToolCall, 
 						"tool %q called with empty arguments but requires %v; "+
 							"the API proxy likely stripped tool_use.input — check proxy configuration",
 						call.Name, schema.Required)
-					log.Printf("WARNING: %s (id=%s)", errMsg, call.ID)
+					runtimeLogger.warnf("WARNING: %s (id=%s)", errMsg, call.ID)
 					appendToolResult(errMsg)
 					now := time.Now()
 					return &tool.CallResult{
@@ -160,6 +159,9 @@ func (t *runtimeToolExecutor) execute(ctx context.Context, call model.ToolCall, 
 	}
 
 	result, err := t.executor.Execute(ctx, callSpec)
+	if err != nil {
+		runtimeLogger.warnf("[api:toolExec] tool=%s id=%s session=%s failed: %v", call.Name, call.ID, t.sessionID, err)
+	}
 	content := toolCallResultContent(result, err)
 
 	if t.hooks != nil {

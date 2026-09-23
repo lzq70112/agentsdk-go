@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -85,12 +84,14 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	opts = opts.withDefaults()
 	opts = opts.frozen()
 
+	initRuntimeLogger(opts.LogDir, opts.Verbose)
+
 	// 初始化文件系统抽象层
 	fsLayer := config.NewFS(opts.ProjectRoot, opts.EmbedFS)
 	opts.fsLayer = fsLayer
 
 	if err := materializeEmbeddedClaudeHooks(opts.ProjectRoot, opts.EmbedFS); err != nil {
-		log.Printf("claude hooks materializer warning: %v", err)
+		runtimeLogger.warnf("claude hooks materializer warning: %v", err)
 	}
 
 	builder := opts.SystemPromptBuilder
@@ -104,7 +105,7 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	}
 
 	if memory, err := config.LoadAgentsMD(opts.ProjectRoot, fsLayer); err != nil {
-		log.Printf("agents.md loader warning: %v", err)
+		runtimeLogger.warnf("agents.md loader warning: %v", err)
 	} else if strings.TrimSpace(memory) != "" {
 		builder.AddSection(SystemPromptSectionMemory, fmt.Sprintf("## Memory\n\n%s", strings.TrimSpace(memory)), SystemPromptPriorityMemory)
 	}
@@ -114,6 +115,7 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		return nil, err
 	}
 	opts.settingsSnapshot = settings
+	opts = applyStreamStallFromSettings(opts, settings)
 
 	mdl, err := resolveModel(ctx, opts)
 	if err != nil {
@@ -125,13 +127,13 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 
 	skReg, skErrs := buildSkillsRegistry(opts)
 	for _, err := range skErrs {
-		log.Printf("skill loader warning: %v", err)
+		runtimeLogger.warnf("skill loader warning: %v", err)
 	}
 	opts.skReg = skReg
 
 	subMgr, subErrs := buildSubagentsManager(opts)
 	for _, err := range subErrs {
-		log.Printf("subagent loader warning: %v", err)
+		runtimeLogger.warnf("subagent loader warning: %v", err)
 	}
 	opts.subMgr = subMgr
 
@@ -159,12 +161,12 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	if opts.RulesEnabled == nil || (opts.RulesEnabled != nil && *opts.RulesEnabled) {
 		loader := config.NewRulesLoader(opts.ProjectRoot)
 		if _, err := loader.LoadRules(); err != nil {
-			log.Printf("rules loader warning: %v", err)
+			runtimeLogger.warnf("rules loader warning: %v", err)
 		} else if rules := strings.TrimSpace(loader.GetContent()); rules != "" {
 			builder.AddSection(SystemPromptSectionRules, fmt.Sprintf("## Project Rules\n\n%s", rules), SystemPromptPriorityRules)
 		}
 		if err := loader.Close(); err != nil {
-			log.Printf("rules loader close warning: %v", err)
+			runtimeLogger.warnf("rules loader close warning: %v", err)
 		}
 	}
 	opts.SystemPromptBuilder = builder
@@ -194,6 +196,27 @@ func (rt *Runtime) beginRun() error {
 	}
 	rt.runWG.Add(1)
 	return nil
+}
+
+// applyStreamStallFromSettings overlays any user-provided streamStall settings
+// onto the already defaulted Options. Settings values are applied only when
+// explicitly present so that programmatic defaults remain intact otherwise.
+func applyStreamStallFromSettings(opts Options, settings *config.Settings) Options {
+	if settings == nil || settings.StreamStall == nil {
+		return opts
+	}
+	cfg := settings.StreamStall
+	if cfg.Timeout != "" {
+		if d, err := time.ParseDuration(cfg.Timeout); err == nil && d > 0 {
+			opts.StreamStall.Timeout = d
+		} else if err != nil {
+			runtimeLogger.warnf("streamStall.timeout invalid %q: %v", cfg.Timeout, err)
+		}
+	}
+	if cfg.FallbackEnabled != nil {
+		opts.StreamStall.FallbackEnabled = *cfg.FallbackEnabled
+	}
+	return opts
 }
 
 func (rt *Runtime) endRun() {
@@ -332,10 +355,10 @@ func (rt *Runtime) Close() error {
 		if rt.histories != nil {
 			for _, sessionID := range rt.histories.SessionIDs() {
 				if cleanupErr := cleanupBashOutputSessionDir(sessionID); cleanupErr != nil {
-					log.Printf("api: session %q temp cleanup failed: %v", sessionID, cleanupErr)
+					runtimeLogger.warnf("api: session %q temp cleanup failed: %v", sessionID, cleanupErr)
 				}
 				if cleanupErr := cleanupToolOutputSessionDir(sessionID); cleanupErr != nil {
-					log.Printf("api: session %q tool output cleanup failed: %v", sessionID, cleanupErr)
+					runtimeLogger.warnf("api: session %q tool output cleanup failed: %v", sessionID, cleanupErr)
 				}
 			}
 		}

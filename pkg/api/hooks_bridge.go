@@ -1,7 +1,6 @@
 package api
 
 import (
-	"log"
 	"strings"
 	"time"
 
@@ -78,7 +77,7 @@ func buildSettingsHooks(settings *config.Settings, projectRoot string) []hooks.S
 						StatusMessage: hookDef.StatusMessage,
 					})
 				case "prompt", "agent":
-					log.Printf("hooks: skipping %s hook type %q (not yet supported)", prefix, hookDef.Type)
+					runtimeLogger.warnf("hooks: skipping %s hook type %q (not yet supported)", prefix, hookDef.Type)
 				}
 			}
 		}

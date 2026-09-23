@@ -11,6 +11,7 @@ func TestMergeSettings(t *testing.T) {
 		Permissions:  &PermissionsConfig{Allow: []string{"A"}},
 		Sandbox:      &SandboxConfig{Enabled: boolPtr(true)},
 		BashOutput:   &BashOutputConfig{SyncThresholdBytes: intPtr(1)},
+		StreamStall:  &StreamStallConfig{Timeout: "60s", FallbackEnabled: boolPtr(true)},
 	}
 	higher := &Settings{
 		APIKeyHelper: "high",
@@ -18,6 +19,7 @@ func TestMergeSettings(t *testing.T) {
 		Permissions:  &PermissionsConfig{Allow: []string{"B"}, DefaultMode: "ask"},
 		Sandbox:      &SandboxConfig{Enabled: boolPtr(false)},
 		BashOutput:   &BashOutputConfig{AsyncThresholdBytes: intPtr(2)},
+		StreamStall:  &StreamStallConfig{Timeout: "300s", FallbackEnabled: boolPtr(false)},
 	}
 
 	merged := MergeSettings(lower, higher)
@@ -35,6 +37,9 @@ func TestMergeSettings(t *testing.T) {
 	}
 	if merged.BashOutput == nil || merged.BashOutput.SyncThresholdBytes == nil || merged.BashOutput.AsyncThresholdBytes == nil {
 		t.Fatalf("expected bash output merged")
+	}
+	if merged.StreamStall == nil || merged.StreamStall.Timeout != "300s" || merged.StreamStall.FallbackEnabled == nil || *merged.StreamStall.FallbackEnabled {
+		t.Fatalf("expected stream stall merged to higher values, got %v", merged.StreamStall)
 	}
 }
 
