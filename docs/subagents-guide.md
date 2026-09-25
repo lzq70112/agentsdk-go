@@ -1,11 +1,11 @@
-# Subagents Guide: Fork-based Tool vs Native Routing
+# Subagents Guide: Built-in Tool vs Native Routing
 
 This SDK ships **two** subagent mechanisms that coexist with different responsibilities:
 
-- **Built-in `subagent` tool** (in `pkg/api`, name `subagent`): the main agent (LLM) decides at runtime to dispatch a sub-agent, and the sub-agent forks the complete conversation context.
+- **Built-in `subagent` tool** (in `pkg/api`, name `subagent`): the main agent (LLM) decides at runtime to dispatch a sub-agent. The sub-agent runs in an **isolated context** — it does not see the main conversation history and runs under its own identity system prompt.
 - **Native routing mechanism** (in `pkg/runtime/subagents`): the SDK dispatches a sub-agent *before* the main agent loop starts, based on an explicit request field or keyword matchers.
 
-This guide compares the two, explains when to use which, and documents agent types, async dispatch, session resumption, and prompt-cache implications of the built-in tool.
+This guide compares the two, explains when to use which, and documents agent types, async dispatch, session resumption, and isolation implications of the built-in tool.
 
 ## Two Mechanisms at a Glance
 
@@ -13,22 +13,25 @@ This guide compares the two, explains when to use which, and documents agent typ
 |---|---|---|
 | Who decides | The main agent (LLM) emits `tool_use: subagent` | The SDK routes in `prepare()`, before the agent loop |
 | Trigger | LLM judgement | `Request.TargetSubagent`; otherwise keyword matchers |
-| Context | Deep copy of the full main-session history, subtask appended at the tail | Independent context from the definition + current prompt |
+| Context | Isolated: no main-session history; starts from one `[Subtask]` delegation message | Independent context from the definition + current prompt |
+| Identity | Sub-agent identity system prompt (type-specific, else a default); does **not** inherit the main agent's identity prompt | Defined by the agent definition |
+| Inherited from main | Project rules / `AGENTS.md` memory, model, tools, MCP servers, skills | Definition + project context |
 | Definitions | Agent types: `Options.AgentTypes` or `.agents/subagents/*.md` | `.agents/agents/` + `Options.Subagents`; built-ins `general-purpose`, `explore`, `plan` |
 | Result flow | Returned as a tool result; the main agent decides how to use it | **Replaces** the prompt; the main loop then runs with it |
 | Async | `background: true` tool parameter | `Manager.DispatchAsync` / `TaskStatus` |
 | Completion delivery | Hooks `SubagentComplete` event | Hooks `SubagentComplete` event, optional `[Subagent Result: ...]` message appended to the session |
-| Background concurrency | Managed by the caller (one goroutine per dispatch) | `Options.MaxConcurrentSubagents` (default 3) |
-| Nested dispatch | Not possible (sub-runtime excludes `subagent`) | Handler-defined |
+| Background concurrency | `Options.MaxConcurrentSubagents` (default 3) | `Options.MaxConcurrentSubagents` (default 3) |
+| Nested dispatch | Hard-blocked at 1 layer: the sub-runtime keeps the `subagent` tool but it is a disabled no-op | Handler-defined |
 
 ## Choosing Between Them
 
 Use the **built-in `subagent` tool** when:
 
 - The decision to delegate belongs to the model, not to your code (Claude Code-style behavior).
-- The sub-agent needs the full conversation context — e.g. "review everything we discussed and produce a conclusion".
+- The task is self-contained and describable in an instruction — the sub-agent has no access to the main conversation, so it works from the instruction alone.
+- You want a fresh perspective uncontaminated by the main conversation.
 - The task is long-running and the conversation must stay responsive (`background: true`).
-- You want follow-up questions to a sub-agent without re-forking the context (`sub_session_id`).
+- You want follow-up questions to a sub-agent without restating the context (`sub_session_id`).
 
 Use the **native routing mechanism** when:
 
@@ -44,9 +47,9 @@ The tool is registered as the built-in `subagent` and is controlled like any oth
 
 When executed, it:
 
-1. Deep-copies the main session history (via the runtime's `HistoryLoader` seam);
-2. Appends one user message at the tail: `[Subtask] <name>: <instruction>` plus the output contract and (if the type has one) the type's append prompt;
-3. Creates a sub-runtime with the same model, system prompt, tools, MCP servers, skills and rules, excluding the `subagent` tool itself;
+1. Builds an isolated context: the sub-session history starts empty (or from the cached sub-session history on a follow-up), not from the main session history;
+2. Sends one delegation message: `[Subtask] <name>: <instruction>` plus the output contract;
+3. Creates a sub-runtime with the same model, tools, MCP servers, skills and rules, but with the **identity system prompt replaced** by the type's `SystemPrompt` (or a default sub-agent identity when the type has none); project rules / `AGENTS.md` memory are still inherited;
 4. Runs the sub-agent under an independent session id `<main-session-id>-sub-<uuid>`;
 
 On success it returns `Success: true` with the sub-agent output as `Output` and the sub-session id in `Data.sub_session_id`. On failure it returns `Success: false` with the error text, so the main agent can react instead of silently losing the result.
@@ -59,11 +62,11 @@ On success it returns `Success: true` with the sub-agent output as `Output` and 
 | `instruction` | string, required | Self-contained task instruction |
 | `type` | string | Agent type name; empty uses the default general type |
 | `background` | bool | `true` returns immediately and notifies via hooks on completion; default `false` blocks |
-| `sub_session_id` | string | Continue an existing sub-session instead of forking again |
+| `sub_session_id` | string | Continue an existing sub-session instead of starting a fresh one |
 
 ## Agent Types
 
-An agent type configures one named flavor of sub-agent. When no type is selected (or the name is not registered), the default general type inherits the main runtime configuration unchanged — this is the backward-compatible path.
+An agent type configures one named flavor of sub-agent. When no type is selected (or the name is not registered), the default general type uses the default sub-agent identity prompt.
 
 ```go
 rt, err := api.New(ctx, api.Options{
@@ -73,23 +76,23 @@ rt, err := api.New(ctx, api.Options{
         {
             Name:         "explorer",
             Description:  "Read-only code navigation and Q&A",
-            AllowedTools: []string{"read", "glob", "grep"},
+            SystemPrompt: "You are a read-only code explorer. Report file:line for every claim.",
         },
         {
             Name:         "auditor",
             Description:  "Security review against OWASP top 10",
-            AppendPrompt: "Report each finding with file:line and severity.",
+            SystemPrompt: "You are a security auditor. Report each finding with file:line and severity.",
         },
     },
 })
 ```
 
-- `AllowedTools` empty → the sub-agent inherits all tools of the main agent. Non-empty → narrows the tool set to the listed built-in and custom tools. MCP tools and skills injection are intentionally not filtered.
-- `AppendPrompt` is appended to the tail fork message only. It never modifies the sub-runtime's system prompt, which keeps the request prefix identical to the main runtime.
+- `SystemPrompt` becomes the sub-runtime's identity system prompt. It replaces the main agent's identity section; project rules / `AGENTS.md` memory are still inherited. When empty, a built-in default sub-agent identity is used.
+- `AllowedTools` is retained for compatibility but **does not narrow** the sub-agent's tool set: the sub-runtime keeps the main runtime's full tool surface (including `subagent` itself, which is a disabled no-op there).
 
 ### File-based Definitions
 
-Definitions can also live in `<ProjectRoot>/.agents/subagents/*.md`, using YAML frontmatter (same style as skill files) plus the prompt body:
+Definitions can also live in `<ProjectRoot>/.agents/subagents/*.md`, using YAML frontmatter (same style as skill files) plus the identity system prompt body:
 
 ```markdown
 ---
@@ -115,26 +118,20 @@ Completion and failure are both delivered on the hooks bus as `SubagentComplete`
 
 ## Session Resumption
 
-Each successful dispatch returns a sub-session id (`Data.sub_session_id`). Passing that id back via the `sub_session_id` parameter continues the sub-agent with its full working memory instead of re-forking the main context:
+Each successful dispatch returns a sub-session id (`Data.sub_session_id`). Passing that id back via the `sub_session_id` parameter continues the sub-agent with its full working memory instead of starting a fresh isolated context:
 
 - The id must belong to the current main session: it has to start with `<main-session-id>-sub-`, otherwise the request is rejected.
-- The id must exist in the in-memory cache; a type argument that disagrees with the first dispatch's type is rejected, so the tool whitelist and append prompt cannot drift.
+- The id must exist in the in-memory cache; a type argument that disagrees with the first dispatch's type is rejected, so the identity system prompt cannot drift.
 - The main session history is never modified by follow-ups.
 - The cache is process-local (no file persistence) and lifetime-bound: `Runtime.ClearSubagentSession(id)` drops one entry explicitly, `Runtime.Close()` releases all of them.
 
-## Prompt-Cache Considerations
+## Isolation and Prompt Cache
 
-The sub-runtime keeps the same system prompt, model, tools, MCP servers and skills as the main runtime; differentiation is confined to the tail fork message so the cached prefix survives.
-
-- **Default type** (no whitelist, no append prompt): the request prefix differs from the main runtime only in the tools array, which excludes the `subagent` tool.
-- **Whitelist types** change the tools array, so the prefix diverges earlier.
-- **Append-prompt-only types** keep the tools array identical to the default; the divergence is confined to the last forked message — the cache-friendliest differentiated form.
-
-Guidance: prefer append-prompt types for behavioral differences; reserve tool whitelists for tasks where a narrower tool surface is genuinely required (e.g. read-only roles) and accept the prefix miss. Cache-hit numbers are provider-dependent — only the Anthropic provider fills `Usage.CacheReadTokens`/`CacheCreationTokens` — so measure before optimizing. A reproducible harness lives in `test/integration/subagent_kvcache_test.go` (build tag `integration`, requires `ANTHROPIC_API_KEY`); the methodology, prefix analysis and decision framework are recorded in `docs/spec/2026-09-24-subagent-agent-types-and-async.md` (Further Notes).
+The sub-runtime inherits the model, tools, MCP servers and skills of the main runtime, but it is **not** a prefix of the main request: it has its own identity system prompt and its own (isolated) message history. Consequently the main conversation's cached prefix is not reused by the sub-agent — cache behavior is measured only against repeated identical sub-agent requests, not against the parent prefix.
 
 ## Notes
 
 - Sub-agents share the main process filesystem and external services; tool calls made by a sub-agent have real side effects.
-- A sub-agent can not dispatch further sub-agents; the `subagent` tool is excluded from the sub-runtime.
+- A sub-agent can not dispatch further sub-agents: the `subagent` tool is present in the sub-runtime but is a disabled no-op that refuses the call (max 1 layer).
 - Sub-session history is in-memory only; it is not written to the user's session files.
 - Both mechanisms publish `SubagentComplete`, but only the built-in tool populates `AgentType`, `Duration` and `OutputLength`.

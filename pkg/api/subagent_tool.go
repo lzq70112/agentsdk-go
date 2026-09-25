@@ -28,16 +28,16 @@ func subagentConcurrencyLimit(opts Options) int {
 	return defaultSubagentMaxConcurrent
 }
 
-// subagentTool 让主 agent 能把当前完整上下文 fork 给子 agent 处理。
-// 子 agent 在与主 agent 完全相同的 Runtime 配置下运行，只在 history 末尾
-// 追加一条子任务指令，从而最大化复用 prefix cache。
+// subagentTool 让主 agent 能把一项自包含任务派发给子 agent 处理。
+// 子 agent 采用隔离上下文：不继承主会话的对话历史，只带一条 delegation 消息
+// 起步，并用自己的身份 system prompt 运行，从而避免被主会话内容带偏。
 type subagentTool struct {
 	opts    Options
 	runtime *Runtime
 
 	// disabled 为 true 时 Execute 直接返回拒绝。子 runtime 中该 tool 的
-	// Name/Description/Schema 与主 runtime 逐字节一致（保 prefix cache），
-	// 仅执行体变成 no-op，从机制上硬阻断孙 agent 派生（提示词只是软约束）。
+	// Name/Description/Schema 与主 runtime 一致，仅执行体变成 no-op，
+	// 从机制上硬阻断孙 agent 派生（提示词只是软约束），最多 1 层。
 	disabled bool
 
 	// 异步派发状态：asyncCtx 与主 Runtime 同生命周期，Close 时取消并在
@@ -58,7 +58,7 @@ type subagentTool struct {
 	bgSlots chan struct{}
 
 	// 子会话缓存：subSessions 按子会话标识索引已成功完成的子会话历史快照，
-	// 供主 agent 携带标识追问时在原上下文续跑（不重新 fork 主历史、
+	// 供主 agent 携带标识追问时在子会话自身上下文续跑（不读主历史、
 	// 不读文件存储）。缓存生命周期与主 Runtime 绑定，Close 时整体清理。
 	subMu       sync.Mutex
 	subSessions map[string]*subSessionEntry
@@ -66,15 +66,15 @@ type subagentTool struct {
 
 // subSessionEntry 是一个可追问子会话的内存缓存条目。
 type subSessionEntry struct {
-	History   []message.Message // 子会话截止目前的完整历史（含 fork 来源的主历史）
+	History   []message.Message // 子会话自身截止目前的完整历史
 	AgentType AgentType         // 首次派发使用的类型配置，追问时保持一致
 	TypeName  string            // 首次派发传入的类型名（空表示默认通用型）
 }
 
 // newSubagentTool 创建一个 subagent tool。
 // opts 必须是创建主 Runtime 时使用的 Options；创建子 Runtime 时会以它为基础，
-// 原样保留全部工具面（保 prefix cache 逐字节一致）并把本 tool 标记为禁用 no-op
-// 防递归，同时注入 fork 后的 history。
+// 保留工具面并把本 tool 标记为禁用 no-op 防递归，同时替换身份 system prompt、
+// 注入子会话自身 history。
 // 项目目录 .agents/subagents/ 下的类型定义文件在此加载，编程注册同名时优先。
 // runtime 可在主 Runtime 创建后通过 bindRuntime 补绑。
 func newSubagentTool(opts Options) *subagentTool {
@@ -112,13 +112,14 @@ func (t *subagentTool) Name() string { return subagentToolName }
 // 清单，让主 agent 能按任务性质选择；未注册时返回基础文案，与历史行为一致。
 func (t *subagentTool) Description() string {
 	base := `当你判断当前对话中的某个任务需要专门能力、独立视角或更详尽分析时，调用此 tool 派生子 agent。
-子 agent 会继承当前完整对话上下文（含全部消息历史），并在与主 agent 完全相同的 Runtime 配置下运行。
+子 agent 在隔离的上下文中运行：它看不到当前对话历史，只依据你写的 instruction 工作，
+并沿用项目的 rules/AGENTS.md 等上下文与工具面。因此 instruction 必须自包含。
 
 何时使用：
 - 需要对大量上下文做整体分析、审查、总结，且更适合作为一个独立任务完整执行
 - 你希望某个任务被完整执行并返回可直接使用的结果，而不是自己一步步做完
 - 任务耗时较长、当前对话不必等待其结果时，用 background=true 后台执行
-- 对已派发的子 agent 追问时，把派发结果中的 sub_session_id 通过同名参数传回，子 agent 将带着此前完整工作记忆续跑，不重新 fork 上下文
+- 对已派发的子 agent 追问时，把派发结果中的 sub_session_id 通过同名参数传回，子 agent 将带着此前完整工作记忆续跑，无需重述背景
 
 何时不要使用：
 - 简单可直接回答的问题，或只需一两次工具调用就能完成的事，亲自执行更快
@@ -182,7 +183,7 @@ func (t *subagentTool) Schema() *tool.JSONSchema {
 			},
 			"sub_session_id": map[string]any{
 				"type":        "string",
-				"description": "要追问的既有子会话标识（即派发结果中的 sub_session_id）；携带该标识时子 agent 带着此前完整工作记忆在原上下文续跑，不重新 fork 主上下文，类型配置沿用首次派发",
+				"description": "要追问的既有子会话标识（即派发结果中的 sub_session_id）；携带该标识时子 agent 带着此前完整工作记忆在原上下文续跑，无需重述背景，类型配置沿用首次派发",
 			},
 		},
 		Required: []string{"name", "instruction"},
@@ -207,31 +208,30 @@ func parseSubagentParams(params map[string]any) (name, instruction, typeName str
 	return name, instruction, typeName, background, subSessionID, nil
 }
 
-// subagentIdentityReminder 追加在子任务消息末尾的身份提醒：子 agent 不得再派发
-// 孙 agent。它只是软约束——真正的硬保证是子 runtime 中 subagent tool 的 no-op 化
-// （见 subagentTool.disabled），提示词只降低模型误调的概率。
-const subagentIdentityReminder = "【身份提醒】你当前是主 agent 派生的子 agent，不能再派生子 agent；请直接完成上述任务并返回结果。"
+// defaultSubagentIdentityPrompt 是未指定 agent 类型时子 agent 的身份 system
+// prompt。子 agent 不继承主 agent 的 system prompt，只拿到这份身份声明 + 项目
+// rules/memory，因此必须在第一句明确它"是子 agent、不是主 agent、看不到主会话
+// 历史"，避免它把自己当成主 agent 继续派发。
+const defaultSubagentIdentityPrompt = `你是一个由主 agent 派发的子 agent，负责完成一项自包含的任务。
+
+你不是主 agent，也看不到主会话的对话历史；你只能依据本次收到的任务说明工作，不要假设自己拥有任务说明之外的背景。
+
+工作要求：
+1. 自主使用可用工具完成任务，先检索、再动手；
+2. 只聚焦被交付的任务范围，不要擅自扩大范围或执行任务说明之外的动作；
+3. 完成后返回该任务的完整结果：结论先行，附关键证据（文件路径、命令输出、验证结果），并说明遗留问题或风险；
+4. 不要只给一句话摘要。`
 
 // subagentDisabledRefusal 是子 runtime 内 subagent tool 被调用时返回的拒绝文案。
-// 与 subagentIdentityReminder 一样，它只是给模型的软提示；硬保证是 disabled 分支
-// 本身——调用不会触达 fork/派发逻辑。测试复用同一常量，避免文案漂移。
+// 它只是给模型的软提示；硬保证是 disabled 分支本身——调用不会触达派发逻辑。
+// 测试复用同一常量，避免文案漂移。
 const subagentDisabledRefusal = "你已经是子 agent，不能再派生子 agent；请直接使用现有工具完成当前任务。"
 
-// buildForkedHistory 克隆主 history 并在末尾追加子任务消息（依次含输出契约、类型
-// 追加提示词与身份提醒）。克隆保证子 agent 运行期间不会意外修改主 agent 的历史对象。
-func buildForkedHistory(mainHistory []message.Message, name, instruction, appendPrompt string) []message.Message {
-	forked := message.CloneMessages(mainHistory)
-	content := fmt.Sprintf("[Subtask] %s: %s\n\n%s", name, instruction, subagentOutputContract)
-	if prompt := strings.TrimSpace(appendPrompt); prompt != "" {
-		content += "\n\n" + prompt
-	}
-	// 身份提醒放在最后：既在追加提示词之后，也不触碰 system prompt 本体，
-	// 与"注入只发生在 history 末尾消息"的 prefix cache 契约一致。
-	content += "\n\n" + subagentIdentityReminder
-	return append(forked, message.Message{
-		Role:    "user",
-		Content: content,
-	})
+// buildDelegationMessage 构造交给子 agent 的任务消息：主 agent 写的 instruction
+// 加上输出契约，确保子 agent 返回完整可用的结果。子 agent 的上下文从这条消息
+// 开始，不再 fork 主会话历史。
+func buildDelegationMessage(name, instruction string) string {
+	return fmt.Sprintf("[Subtask] %s: %s\n\n%s", name, instruction, subagentOutputContract)
 }
 
 // newSubSessionID 生成子 agent 的独立 session id，避免与主 session 的持久化文件冲突。
@@ -239,50 +239,95 @@ func newSubSessionID(sessionID string) string {
 	return fmt.Sprintf("%s-sub-%s", sessionID, uuid.New().String())
 }
 
-// buildSubOptions 基于主 Options 构造子 Runtime 选项：工具面原样保留，仅把子
-// runtime 内的 subagent tool 标记为禁用 no-op，并把 HistoryLoader 替换为永远返回
-// fork 副本，使子 agent 不读任何文件存储。
-// 为什么不排除工具、不套类型白名单：子请求的 tools 与 system 必须与主请求逐字节
-// 一致才能命中 provider 的 KV/prefix cache；删工具或收窄都会在前缀第一个 token
-// 处破坏缓存。递归派生由 subagentDisabled 硬阻断，不是靠删掉工具。
-func (t *subagentTool) buildSubOptions(forked []message.Message) Options {
+// buildSubOptions 基于主 Options 构造子 Runtime 选项：子 agent 采用隔离上下文，
+// 不 fork 主会话历史；身份 system prompt 由 agent 类型决定（为空时用默认），替换
+// 子 runtime 的 identity 段，但保留 rules/memory 等项目上下文。子 runtime 内的
+// subagent tool 标记为禁用 no-op，硬阻断孙 agent 派生（最多 1 层）。
+// history 是子会话自身的历史：首次派发为 nil（全新上下文），追问续跑时传回先前快照。
+func (t *subagentTool) buildSubOptions(agentType AgentType, history []message.Message) Options {
 	subOpts := t.opts
 	subOpts.subagentDisabled = true
-	subOpts.HistoryLoader = func(string) ([]message.Message, error) { return forked, nil }
+	identity := strings.TrimSpace(agentType.SystemPrompt)
+	if identity == "" {
+		identity = defaultSubagentIdentityPrompt
+	}
+	subOpts.SystemPrompt = identity
+	subOpts.HistoryLoader = func(string) ([]message.Message, error) {
+		return message.CloneMessages(history), nil
+	}
 	return subOpts
 }
 
+// subagentStreamContext 返回子 agent 专用的隔离 context：保留取消、超时与
+// session 标识，但把流式事件出口换成 no-op，并换上独立的 streamForwardState。
+// 主会话用 RunStream 时，子 agent 的文本 delta 与工具输出若沿用主会话的出口，
+// 会被推入主事件流、混进用户可见的主回复，并置位主会话的转发状态；这里切断这条
+// 通路。出口保持非 nil 是刻意的：detectStall 由「出口是否存在」推导，保留它才能
+// 让子 agent 继续享有流式卡死检测与回退。
+func subagentStreamContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx = context.WithValue(ctx, streamEmitCtxKey, streamEmitFunc(func(context.Context, StreamEvent) {}))
+	ctx = context.WithValue(ctx, streamForwardStateCtxKey, &streamForwardState{})
+	return ctx
+}
+
 // dispatch 创建子 Runtime 并同步执行子任务，返回子 agent 的输出文本。
-// dispatch 创建子 Runtime 并同步执行子任务，返回子 agent 的输出文本。
-// 执行成功后把子会话历史快照写入缓存，供后续追问在原上下文续跑。
-func (t *subagentTool) dispatch(ctx context.Context, sessionID, subSessionID, name, instruction string, agentType AgentType, start time.Time, subOpts Options) (string, error) {
-	subRuntime, err := New(ctx, subOpts)
+// prompt 是发给子 agent 的完整任务消息（delegation 包装后的指令）。执行成功后把
+// 子会话历史快照写入缓存，供后续追问续跑。
+func (t *subagentTool) dispatch(ctx context.Context, sessionID, subSessionID, name, prompt string, agentType AgentType, start time.Time, subOpts Options) (string, error) {
+	subCtx := subagentStreamContext(ctx)
+	subRuntime, err := New(subCtx, subOpts)
 	if err != nil {
 		runtimeLogger.warnf("[subagent] 创建子 Runtime 失败 main_session=%s name=%s: %v", sessionID, name, err)
+		t.notifySubagentCompletion(sessionID, subSessionID, name, agentType, nil, err)
 		return "", fmt.Errorf("创建子 agent 失败: %w", err)
 	}
 	defer subRuntime.Close()
 
-	res, err := subRuntime.Run(ctx, Request{
+	res, err := subRuntime.Run(subCtx, Request{
 		SessionID: subSessionID,
-		Prompt:    instruction,
+		Prompt:    prompt,
 	})
+	// 无论成功失败都取一次子会话历史快照：成功用于追问续跑与落盘，失败用于排查。
+	// SessionHistory 返回克隆，可安全交给回调与缓存。
+	history, hasHistory := subRuntime.SessionHistory(subSessionID)
 	if err != nil {
 		runtimeLogger.warnf("[subagent] 子 agent 执行失败 main_session=%s sub_session=%s name=%s duration=%s: %v",
 			sessionID, subSessionID, name, time.Since(start), err)
+		t.notifySubagentCompletion(sessionID, subSessionID, name, agentType, history, err)
 		return "", fmt.Errorf("子 agent 执行失败: %w", err)
 	}
 	// 缓存子会话历史供后续追问续跑：历史取自子 runtime 的内存快照
 	// （SessionHistory 返回克隆），不经过文件存储。
-	if history, ok := subRuntime.SessionHistory(subSessionID); ok {
+	if hasHistory {
 		t.storeSubSession(subSessionID, agentType, history)
 	}
+	t.notifySubagentCompletion(sessionID, subSessionID, name, agentType, history, nil)
 
 	output := ""
 	if res.Result != nil {
 		output = res.Result.Output
 	}
 	return output, nil
+}
+
+// notifySubagentCompletion 调用宿主的子会话完成回调（若已配置）。回调在子会话历史
+// 快照就绪后触发，同步派发与后台任务共用同一入口，保证宿主不漏接任何子会话。
+func (t *subagentTool) notifySubagentCompletion(mainSessionID, subSessionID, name string, agentType AgentType, history []message.Message, err error) {
+	handler := t.opts.SubagentCompletionHandler
+	if handler == nil {
+		return
+	}
+	handler(SubagentCompletion{
+		MainSessionID: mainSessionID,
+		SubSessionID:  subSessionID,
+		Name:          name,
+		AgentType:     agentType.Name,
+		History:       history,
+		Err:           err,
+	})
 }
 
 // publishSubagentEvent 向 hooks 总线发布 subagent 生命周期事件，供平台侧审计与监控。
@@ -296,9 +341,9 @@ func (t *subagentTool) publishSubagentEvent(evt hooks.Event) {
 	}
 }
 
-// Execute 被 SDK tool executor 调用，完成 fork 上下文、运行子 agent、返回结果。
-// 子 runtime 中的本 tool 是 no-op：定义与主 runtime 一致，但调用即拒绝——
-// 这是阻断孙 agent 派生的硬保证，不依赖模型自觉。
+// Execute 被 SDK tool executor 调用：为子 agent 准备隔离上下文（全新历史 + 身份
+// system prompt），运行子任务并返回结果。子 runtime 中的本 tool 是 no-op：调用即
+// 拒绝——这是阻断孙 agent 派生的硬保证（最多 1 层），不依赖模型自觉。
 func (t *subagentTool) Execute(ctx context.Context, params map[string]any) (*tool.ToolResult, error) {
 	if t.disabled {
 		return &tool.ToolResult{
@@ -325,10 +370,10 @@ func (t *subagentTool) Execute(ctx context.Context, params map[string]any) (*too
 	}
 
 	var agentType AgentType
-	var baseHistory []message.Message
+	var history []message.Message
 	var subSessionID string
 	if resumeID != "" {
-		// 追问路径：从内存缓存取子会话历史续跑，不重新 fork 主上下文。
+		// 追问路径：取回子会话自身的历史在原上下文续跑（不是主会话历史）。
 		entry, entryErr := t.lookupSubSession(sessionID, resumeID, typeName)
 		if entryErr != nil {
 			return &tool.ToolResult{
@@ -337,16 +382,16 @@ func (t *subagentTool) Execute(ctx context.Context, params map[string]any) (*too
 			}, nil
 		}
 		agentType = entry.AgentType
-		baseHistory = entry.History
+		history = entry.History
 		subSessionID = resumeID
 	} else {
+		// 首次派发：子 agent 从隔离上下文起步，历史为空，只带一条 delegation 消息。
 		agentType = t.lookupAgentType(typeName)
-		mainHistory, _ := t.runtime.SessionHistory(sessionID)
-		baseHistory = mainHistory
 		subSessionID = newSubSessionID(sessionID)
 	}
-
-	forked := buildForkedHistory(baseHistory, name, instruction, agentType.AppendPrompt)
+	// 首次派发与追问都把指令包装成 delegation 消息（[Subtask] + 输出契约），
+	// 追问时它作为新的一轮用户消息追加在子会话既有历史之后。
+	prompt := buildDelegationMessage(name, instruction)
 
 	t.publishSubagentEvent(hooks.Event{
 		Type:      hooks.SubagentStart,
@@ -358,12 +403,12 @@ func (t *subagentTool) Execute(ctx context.Context, params map[string]any) (*too
 		},
 	})
 
-	subOpts := t.buildSubOptions(forked)
+	subOpts := t.buildSubOptions(agentType, history)
 	if background {
-		return t.dispatchAsync(sessionID, subSessionID, name, instruction, agentType, start, subOpts), nil
+		return t.dispatchAsync(sessionID, subSessionID, name, instruction, prompt, agentType, start, subOpts), nil
 	}
 
-	output, err := t.dispatch(ctx, sessionID, subSessionID, name, instruction, agentType, start, subOpts)
+	output, err := t.dispatch(ctx, sessionID, subSessionID, name, prompt, agentType, start, subOpts)
 	t.reportCompletion(sessionID, subSessionID, name, agentType, output, err, time.Since(start))
 	if err != nil {
 		return &tool.ToolResult{
@@ -411,7 +456,7 @@ func (t *subagentTool) reportCompletion(sessionID, subSessionID, name string, ag
 // goroutine 使用与主 Runtime 同生命周期的 asyncCtx：主 Runtime 关闭时任务被取消，
 // shutdownAsync 会等待其退出，不泄漏 goroutine。wg 登记与关闭检查在同一把锁内
 // 完成，保证关闭后不会有新任务绕过等待。
-func (t *subagentTool) dispatchAsync(sessionID, subSessionID, name, instruction string, agentType AgentType, start time.Time, subOpts Options) *tool.ToolResult {
+func (t *subagentTool) dispatchAsync(sessionID, subSessionID, name, instruction, prompt string, agentType AgentType, start time.Time, subOpts Options) *tool.ToolResult {
 	// 并发上限：拿不到槽位直接拒绝，不阻塞主 agent 当前对话。
 	select {
 	case t.bgSlots <- struct{}{}:
@@ -449,7 +494,7 @@ func (t *subagentTool) dispatchAsync(sessionID, subSessionID, name, instruction 
 		defer t.asyncWG.Done()
 		defer func() { <-t.bgSlots }()
 		defer cancel()
-		output, err := t.dispatch(ctx, sessionID, subSessionID, name, instruction, agentType, start, subOpts)
+		output, err := t.dispatch(ctx, sessionID, subSessionID, name, prompt, agentType, start, subOpts)
 		t.finishTask(subSessionID, output, err)
 		t.reportCompletion(sessionID, subSessionID, name, agentType, output, err, time.Since(start))
 		t.injectAsyncResult(sessionID, subSessionID, name, instruction, output, err)

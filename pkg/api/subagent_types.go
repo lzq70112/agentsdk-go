@@ -19,14 +19,13 @@ type AgentType struct {
 	Name string
 	// Description 说明该类型的用途，注入 tool 描述供主 agent 按任务性质匹配。
 	Description string
-	// AllowedTools 当前不再收窄子 agent 的工具面：子 runtime 的工具集与主
-	// runtime 逐字节一致（保 KV/prefix cache），字段仅为兼容与规划保留，
-	// 对子请求的工具集没有影响。
+	// AllowedTools 当前不收窄子 agent 的工具面：子 runtime 的工具集与主 runtime
+	// 一致，字段仅为兼容与规划保留，对子请求的工具集没有影响。
 	AllowedTools []string
-	// AppendPrompt 追加到子任务消息末尾的提示词，用于给该类型的子 agent 补充
-	// 工作指引。注入只发生在 history 末尾消息，不改子 runtime 的 system prompt
-	// 本体，以保持与主 runtime 的请求前缀一致（prefix cache 契约）。
-	AppendPrompt string
+	// SystemPrompt 是该类型子 agent 的身份 system prompt，用于替换子 runtime 的
+	// identity 段——子 agent 不继承主 agent 的 system prompt，只继承 rules/memory
+	// 等项目上下文。为空时回落到 defaultSubagentIdentityPrompt。
+	SystemPrompt string
 }
 
 // lookupAgentType 按名称查找已注册类型；名称为空或未找到时返回零值（默认通用型）。
@@ -51,7 +50,7 @@ type agentTypeFileMetadata struct {
 }
 
 // parseAgentTypeFile 解析单个类型定义文件：frontmatter 元数据 + 正文（作为
-// AppendPrompt 注入子任务消息末尾）。
+// 该类型子 agent 的身份 system prompt）。
 func parseAgentTypeFile(content string) (AgentType, error) {
 	trimmed := strings.TrimPrefix(content, "\uFEFF")
 	lines := strings.Split(trimmed, "\n")
@@ -86,7 +85,7 @@ func parseAgentTypeFile(content string) (AgentType, error) {
 		Name:         name,
 		Description:  desc,
 		AllowedTools: []string(meta.AllowedTools),
-		AppendPrompt: strings.TrimSpace(strings.Join(lines[end+1:], "\n")),
+		SystemPrompt: strings.TrimSpace(strings.Join(lines[end+1:], "\n")),
 	}, nil
 }
 

@@ -128,7 +128,7 @@ func TestSubagentTool_Execute_RequiresArguments(t *testing.T) {
 	}
 }
 
-func TestSubagentTool_ForksHistoryAndRunsChild(t *testing.T) {
+func TestSubagentTool_RunsChildInIsolatedContext(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	mm := &recordingMockModel{}
@@ -205,10 +205,10 @@ func TestSubagentTool_ForksHistoryAndRunsChild(t *testing.T) {
 		t.Fatalf("subagent session id missing -sub- suffix: %s", subSessionID)
 	}
 
-	// 找到子 agent 的 model 调用（消息长度比主 history 长）。
+	// 找到子 agent 的 model 调用（含 [Subtask] 消息的请求）。
 	var subReq *model.Request
 	for i := range mm.calls {
-		if len(mm.calls[i].Messages) > len(mainBefore) {
+		if subtaskMessage(&mm.calls[i], "analyzer") != "" {
 			subReq = &mm.calls[i]
 			break
 		}
@@ -216,9 +216,9 @@ func TestSubagentTool_ForksHistoryAndRunsChild(t *testing.T) {
 	if subReq == nil {
 		t.Fatal("subagent runtime was not invoked")
 	}
-	// 子 agent 的消息应比主 history 多（至少包含 [Subtask] 和子 prompt）。
-	if len(subReq.Messages) <= len(mainBefore) {
-		t.Fatalf("subagent messages should be longer than main history: sub=%d main=%d", len(subReq.Messages), len(mainBefore))
+	// 隔离上下文：子 agent 不带主会话历史，消息数远少于主 history，仅含 delegation 消息。
+	if len(subReq.Messages) >= len(mainBefore) {
+		t.Fatalf("subagent messages should be shorter than main history (isolated context): sub=%d main=%d", len(subReq.Messages), len(mainBefore))
 	}
 	last := subReq.Messages[len(subReq.Messages)-1]
 	if last.Role != "user" {
@@ -431,7 +431,7 @@ func hasTool(names []string, name string) bool {
 	return false
 }
 
-func TestSubagentTool_ChildRuntimeInheritsSystemPrompt(t *testing.T) {
+func TestSubagentTool_ChildRuntimeUsesIsolatedIdentityPrompt(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	mm := &recordingMockModel{}
@@ -483,17 +483,23 @@ func TestSubagentTool_ChildRuntimeInheritsSystemPrompt(t *testing.T) {
 	if mainSystem == "" {
 		t.Fatal("main system prompt empty")
 	}
-	if childSystem != mainSystem {
-		t.Fatalf("child system prompt differs from main:\nmain=%q\nchild=%q", mainSystem, childSystem)
+	// 隔离上下文：子 agent 不继承主 agent 的身份 system prompt，改用子 agent 身份声明。
+	if childSystem == mainSystem {
+		t.Fatalf("child system prompt should not equal main identity:\nmain=%q\nchild=%q", mainSystem, childSystem)
+	}
+	if strings.Contains(childSystem, "you are the main assistant") {
+		t.Fatalf("child system prompt leaked main identity:\n%q", childSystem)
+	}
+	if !strings.Contains(childSystem, defaultSubagentIdentityPrompt) {
+		t.Fatalf("child system prompt missing default subagent identity:\n%q", childSystem)
 	}
 }
 
-// TestSubagentTool_ChildRequestPrefixByteIdentical 验证子请求与主请求的 tools 与
-// system 逐字节一致——这是 KV/prefix cache 命中的硬契约：任何一处漂移（删工具、
-// 套白名单、改 system）都会让子请求从第一个 token 起与主请求分叉，缓存全部落空。
-// 序列化整个 tools 块与 system 逐字节比对，比"逐个工具名在不在"更接近 provider
-// 实际收到的请求。
-func TestSubagentTool_ChildRequestPrefixByteIdentical(t *testing.T) {
+// TestSubagentTool_ChildRequestUsesIsolatedContext 验证子请求的工具面与主请求一致，
+// 但上下文隔离：system prompt 是子 agent 身份（不等于主身份），messages 从一条
+// [Subtask] 消息起步、不包含主会话历史。这条测试守住"子 agent 不被主会话带偏"
+// 这一设计意图——若有人把主历史重新接回子请求，这里会先挂。
+func TestSubagentTool_ChildRequestUsesIsolatedContext(t *testing.T) {
 	ctx := context.Background()
 	mm := &recordingMockModel{}
 
@@ -550,6 +556,8 @@ func TestSubagentTool_ChildRequestPrefixByteIdentical(t *testing.T) {
 		t.Fatal("subagent runtime was not invoked")
 	}
 
+	// 工具面一致：子 agent 沿用主 runtime 的工具集，不删 subagent 工具（递归由
+	// 子 runtime 内的 no-op 阻断）。
 	mainTools, err := json.Marshal(mm.calls[0].Tools)
 	if err != nil {
 		t.Fatalf("marshal main tools: %v", err)
@@ -561,39 +569,42 @@ func TestSubagentTool_ChildRequestPrefixByteIdentical(t *testing.T) {
 	if !bytes.Equal(mainTools, childTools) {
 		t.Fatalf("child request tools differ from main:\nmain=%s\nchild=%s", mainTools, childTools)
 	}
-	if childReq.System != mm.calls[0].System {
-		t.Fatalf("child request system differs from main:\nmain=%q\nchild=%q", mm.calls[0].System, childReq.System)
-	}
 
-	// messages 也必须是 fork 时刻主 history 的精确前缀，只在末尾追加子任务消息。
-	// tools/system 一致只保证请求头部命中缓存，消息序列若在中间分叉，缓存同样落空。
-	mainAtFork, _ := mainRT.SessionHistory(sessionID)
-	if len(childReq.Messages) <= len(mainAtFork) {
-		t.Fatalf("child request should extend main history: child=%d main=%d", len(childReq.Messages), len(mainAtFork))
+	// 上下文隔离：system 为子 agent 身份，messages 不含主会话历史。
+	if childReq.System == mm.calls[0].System {
+		t.Fatalf("child request system should differ from main identity:\nmain=%q\nchild=%q", mm.calls[0].System, childReq.System)
 	}
+	if !strings.Contains(childReq.System, defaultSubagentIdentityPrompt) {
+		t.Fatalf("child request system missing subagent identity:\n%q", childReq.System)
+	}
+	mainAtFork, _ := mainRT.SessionHistory(sessionID)
 	mainAsModel := convertMessages(mainAtFork)
-	for i := range mainAsModel {
-		if !reflect.DeepEqual(childReq.Messages[i], mainAsModel[i]) {
-			t.Fatalf("child request message %d differs from main history:\nmain=%+v\nchild=%+v", i, mainAsModel[i], childReq.Messages[i])
+	if len(mainAsModel) > 0 {
+		for i := range mainAsModel {
+			if i >= len(childReq.Messages) {
+				break
+			}
+			if reflect.DeepEqual(childReq.Messages[i], mainAsModel[i]) {
+				t.Fatalf("child request message %d matches main history, context not isolated:\nmain=%+v\nchild=%+v", i, mainAsModel[i], childReq.Messages[i])
+			}
 		}
 	}
-	tail := childReq.Messages[len(mainAsModel):]
 	hasSubtask := false
-	for _, m := range tail {
+	for _, m := range childReq.Messages {
 		if strings.Contains(m.Content, "[Subtask] ") {
 			hasSubtask = true
 			break
 		}
 	}
 	if !hasSubtask {
-		t.Fatalf("child request tail should carry the [Subtask] message, got: %+v", tail)
+		t.Fatalf("child request should carry the [Subtask] message, got: %+v", childReq.Messages)
 	}
 }
 
 // TestSubagentTool_DisabledInstanceRefusesAndSpawnsNothing 直接对子 runtime 中
 // 注册的 subagent tool 实例调用：返回拒绝结果（Success=false、nil error，属正常
 // 工具结果而非执行错误），且不创建任何孙 runtime（model 零新增调用）。拒绝发生在
-// Execute 最早期，不触达 fork/派发逻辑，也无 goroutine 与会话泄漏。
+// Execute 最早期，不触达派发逻辑，也无 goroutine 与会话泄漏。
 func TestSubagentTool_DisabledInstanceRefusesAndSpawnsNothing(t *testing.T) {
 	ctx := context.Background()
 	mm := &recordingMockModel{}
@@ -602,7 +613,7 @@ func TestSubagentTool_DisabledInstanceRefusesAndSpawnsNothing(t *testing.T) {
 		ModelFactory: recordingMockModelFactory{model: mm},
 		ProjectRoot:  t.TempDir(),
 	})
-	subOpts := st.buildSubOptions([]message.Message{{Role: "user", Content: "x"}})
+	subOpts := st.buildSubOptions(AgentType{}, []message.Message{{Role: "user", Content: "x"}})
 
 	childRT, err := New(ctx, subOpts)
 	if err != nil {
@@ -840,72 +851,18 @@ func TestSubagentTool_SubtaskMessageCarriesOutputContract(t *testing.T) {
 			t.Fatalf("[Subtask] message missing output contract %q, got: %q", want, subtask)
 		}
 	}
-	// 身份提醒必须出现在子任务消息末尾：子 agent 不应再派生子 agent。它是软
-	// 约束，硬保证是子 runtime 中 subagent tool 的 no-op（见
-	// TestSubagentTool_ChildRuntimeSubagentToolIsDisabledNoOp）。
-	if !strings.Contains(subtask, subagentIdentityReminder) {
-		t.Fatalf("[Subtask] message missing identity reminder, got: %q", subtask)
-	}
-	if !strings.HasSuffix(subtask, subagentIdentityReminder) {
-		t.Fatalf("[Subtask] message should end with identity reminder, got: %q", subtask)
-	}
 }
 
-// TestBuildForkedHistory_ClonesAndAppendsContract 验证 fork 语义与 runtime 创建解耦：
-// 主 history 被深拷贝不被污染，末尾子任务消息依次携带 name、instruction、输出契约、
-// 类型追加提示词与身份提醒。这条测试守住的是"子 agent 永远带着完整上下文和契约
-// 起步"这一不变量——未来引入异步/恢复时 fork 逻辑若被破坏，这里会先挂。
-func TestBuildForkedHistory_ClonesAndAppendsContract(t *testing.T) {
-	mainHistory := []message.Message{
-		{Role: "user", Content: "hello"},
-		{Role: "assistant", Content: "hi"},
-	}
+// TestBuildDelegationMessage_CarriesNameInstructionAndContract 验证派发消息由 name、
+// instruction 与输出契约拼成。子 agent 看不到主会话历史，这条消息就是它的全部任务
+// 背景，因此必须自包含——契约缺失会让子 agent 只回一句话摘要，主 agent 只能返工。
+func TestBuildDelegationMessage_CarriesNameInstructionAndContract(t *testing.T) {
+	msg := buildDelegationMessage("analyzer", "分析日志")
 
-	forked := buildForkedHistory(mainHistory, "analyzer", "分析日志", "")
-	if len(forked) != len(mainHistory)+1 {
-		t.Fatalf("forked length = %d, want %d", len(forked), len(mainHistory)+1)
-	}
-	last := forked[len(forked)-1]
-	if last.Role != "user" {
-		t.Fatalf("last forked message role = %q, want user", last.Role)
-	}
 	for _, want := range []string{"[Subtask] analyzer", "分析日志", "结论先行", "不要只给一句话摘要"} {
-		if !strings.Contains(last.Content, want) {
-			t.Fatalf("forked subtask message missing %q, got: %q", want, last.Content)
+		if !strings.Contains(msg, want) {
+			t.Fatalf("delegation message missing %q, got: %q", want, msg)
 		}
-	}
-	// 身份提醒收尾（追加提示词之后）：提示模型不要派发孙 agent。
-	if !strings.HasSuffix(last.Content, subagentIdentityReminder) {
-		t.Fatalf("forked subtask message should end with identity reminder, got: %q", last.Content)
-	}
-	// 主 history 不被污染。
-	if len(mainHistory) != 2 || mainHistory[0].Content != "hello" || mainHistory[1].Content != "hi" {
-		t.Fatalf("main history mutated: %+v", mainHistory)
-	}
-}
-
-// TestBuildForkedHistory_AppendPromptBeforeIdentityReminder 验证类型追加提示词与
-// 身份提醒的先后顺序：追加提示词在前、身份提醒始终收尾。顺序漂移会让"最后一条
-// 指令"的含义变化，模型对末尾内容的权重最高，不能被追加提示词抢位。
-func TestBuildForkedHistory_AppendPromptBeforeIdentityReminder(t *testing.T) {
-	forked := buildForkedHistory(
-		[]message.Message{{Role: "user", Content: "hello"}},
-		"reviewer", "审查变更", "先列风险点",
-	)
-	last := forked[len(forked)-1]
-	promptIdx := strings.Index(last.Content, "先列风险点")
-	reminderIdx := strings.Index(last.Content, subagentIdentityReminder)
-	if promptIdx < 0 {
-		t.Fatalf("append prompt missing: %q", last.Content)
-	}
-	if reminderIdx < 0 {
-		t.Fatalf("identity reminder missing: %q", last.Content)
-	}
-	if promptIdx > reminderIdx {
-		t.Fatalf("identity reminder must come after append prompt: %q", last.Content)
-	}
-	if !strings.HasSuffix(last.Content, subagentIdentityReminder) {
-		t.Fatalf("identity reminder must end the subtask message: %q", last.Content)
 	}
 }
 
@@ -916,17 +873,18 @@ type fakeSubagentTool struct{ dummyCustomTool }
 func (fakeSubagentTool) Name() string { return subagentToolName }
 
 // TestSubagentTool_BuildSubOptions_KeepsFullToolSetAndInjectsLoader 验证子 Options
-// 的构造规则：工具面全量保留（不排除 subagent、不按类型白名单收窄，保 prefix
-// cache），loader 永远返回 fork 副本（子 agent 不读文件存储），且子 Options 把
-// subagentDisabled 置位，使子 runtime 内的 subagent tool 成为拒绝执行的 no-op。
+// 的构造规则：工具面全量保留（不排除 subagent、不按类型白名单收窄），身份
+// system prompt 被替换为子 agent 身份，loader 返回子会话自身历史（子 agent 不读
+// 文件存储），且子 Options 把 subagentDisabled 置位，使子 runtime 内的 subagent
+// tool 成为拒绝执行的 no-op。
 func TestSubagentTool_BuildSubOptions_KeepsFullToolSetAndInjectsLoader(t *testing.T) {
-	forked := []message.Message{{Role: "user", Content: "x"}}
+	childHistory := []message.Message{{Role: "user", Content: "x"}}
 	st := newSubagentTool(Options{
 		EnabledBuiltinTools: []string{"read", "subagent"},
 		CustomTools:         []tool.Tool{dummyCustomTool{}, fakeSubagentTool{}},
 	})
 
-	subOpts := st.buildSubOptions(forked)
+	subOpts := st.buildSubOptions(AgentType{}, childHistory)
 
 	if len(subOpts.EnabledBuiltinTools) != 2 ||
 		!hasTool(subOpts.EnabledBuiltinTools, "read") ||
@@ -939,6 +897,9 @@ func TestSubagentTool_BuildSubOptions_KeepsFullToolSetAndInjectsLoader(t *testin
 	if !subOpts.subagentDisabled {
 		t.Fatal("sub options should mark the child subagent tool disabled")
 	}
+	if subOpts.SystemPrompt != defaultSubagentIdentityPrompt {
+		t.Fatalf("sub options should set the default subagent identity, got: %q", subOpts.SystemPrompt)
+	}
 	if subOpts.HistoryLoader == nil {
 		t.Fatal("sub options missing history loader")
 	}
@@ -946,8 +907,8 @@ func TestSubagentTool_BuildSubOptions_KeepsFullToolSetAndInjectsLoader(t *testin
 	if err != nil {
 		t.Fatalf("history loader error: %v", err)
 	}
-	if len(loaded) != len(forked) {
-		t.Fatalf("history loader returned %d messages, want %d", len(loaded), len(forked))
+	if len(loaded) != len(childHistory) {
+		t.Fatalf("history loader returned %d messages, want %d", len(loaded), len(childHistory))
 	}
 }
 
@@ -1044,10 +1005,10 @@ func TestSubagentTool_TypeAllowedToolsNoLongerNarrowsTools(t *testing.T) {
 	}
 }
 
-// TestSubagentTool_TypeAppendPromptInjected 验证类型追加提示词注入到子任务消息，
-// 且子 runtime 的 system prompt 本体与主 runtime 一致——后者是 prefix cache 命中的
-// 硬契约，注入只能发生在 history 末尾消息，不能改 system prompt。
-func TestSubagentTool_TypeAppendPromptInjected(t *testing.T) {
+// TestSubagentTool_TypeSystemPromptOverridesChildIdentity 验证类型自定义的
+// SystemPrompt 成为子 agent 的身份 system prompt（替换子 runtime 的 identity 段），
+// 而不是主 agent 的身份。这条测试守住"按类型定制子 agent 身份"的设计意图。
+func TestSubagentTool_TypeSystemPromptOverridesChildIdentity(t *testing.T) {
 	ctx := context.Background()
 	mm := &recordingMockModel{}
 
@@ -1060,7 +1021,7 @@ func TestSubagentTool_TypeAppendPromptInjected(t *testing.T) {
 		AgentTypes: []AgentType{{
 			Name:         "reviewer",
 			Description:  "代码审查",
-			AppendPrompt: "先列出风险点，再给出结论",
+			SystemPrompt: "先列出风险点，再给出结论",
 		}},
 		HistoryLoader: func(sid string) ([]message.Message, error) {
 			if sid == sessionID {
@@ -1098,20 +1059,11 @@ func TestSubagentTool_TypeAppendPromptInjected(t *testing.T) {
 		t.Fatalf("expected at least 2 model calls, got %d", len(mm.calls))
 	}
 	childReq := mm.calls[len(mm.calls)-1]
-	if childReq.System != mm.calls[0].System {
-		t.Fatalf("child system prompt must equal main:\nmain=%q\nchild=%q", mm.calls[0].System, childReq.System)
+	if childReq.System == mm.calls[0].System {
+		t.Fatalf("child system prompt should not equal main identity:\nmain=%q\nchild=%q", mm.calls[0].System, childReq.System)
 	}
-	subtask := ""
-	for _, msg := range childReq.Messages {
-		if strings.Contains(msg.Content, "[Subtask]") {
-			subtask = msg.Content
-		}
-	}
-	if subtask == "" {
-		t.Fatal("child request missing [Subtask] message")
-	}
-	if !strings.Contains(subtask, "先列出风险点，再给出结论") {
-		t.Fatalf("[Subtask] message missing type append prompt, got: %q", subtask)
+	if !strings.Contains(childReq.System, "先列出风险点，再给出结论") {
+		t.Fatalf("child system prompt missing type identity, got: %q", childReq.System)
 	}
 }
 
@@ -1132,7 +1084,7 @@ func TestSubagentTool_UnknownTypeFallsBackToDefault(t *testing.T) {
 			Name:         "explorer",
 			Description:  "只读搜索",
 			AllowedTools: []string{"read"},
-			AppendPrompt: "只读",
+			SystemPrompt: "只读",
 		}},
 		HistoryLoader: func(sid string) ([]message.Message, error) {
 			if sid == sessionID {
@@ -1317,8 +1269,8 @@ allowed-tools:
 	if len(at.AllowedTools) != 2 || at.AllowedTools[0] != "read" || at.AllowedTools[1] != "grep" {
 		t.Fatalf("allowed tools = %v", at.AllowedTools)
 	}
-	if !strings.Contains(at.AppendPrompt, "先定位再总结") {
-		t.Fatalf("append prompt = %q", at.AppendPrompt)
+	if !strings.Contains(at.SystemPrompt, "先定位再总结") {
+		t.Fatalf("system prompt = %q", at.SystemPrompt)
 	}
 	if !strings.Contains(st.Description(), "explorer") {
 		t.Fatalf("Description should list file-loaded type, got: %s", st.Description())
@@ -1345,15 +1297,15 @@ description: 文件版描述
 		AgentTypes: []AgentType{{
 			Name:         "explorer",
 			Description:  "编程版描述",
-			AppendPrompt: "编程版提示词。",
+			SystemPrompt: "编程版提示词。",
 		}},
 	})
 	at := st.lookupAgentType("explorer")
 	if at.Description != "编程版描述" {
 		t.Fatalf("programmatic registration should override file definition, got %q", at.Description)
 	}
-	if !strings.Contains(at.AppendPrompt, "编程版提示词") {
-		t.Fatalf("append prompt should come from programmatic registration, got %q", at.AppendPrompt)
+	if !strings.Contains(at.SystemPrompt, "编程版提示词") {
+		t.Fatalf("system prompt should come from programmatic registration, got %q", at.SystemPrompt)
 	}
 }
 
@@ -2433,7 +2385,7 @@ func TestSubagentTool_ResumeKeepsTypeConfig(t *testing.T) {
 		EnabledBuiltinTools: []string{"read", "write", "subagent"},
 		CustomTools:         []tool.Tool{dummyCustomTool{}},
 		AgentTypes: []AgentType{
-			{Name: "explorer", Description: "只读搜索型", AllowedTools: []string{"read"}, AppendPrompt: "只做只读检索"},
+			{Name: "explorer", Description: "只读搜索型", AllowedTools: []string{"read"}, SystemPrompt: "只做只读检索"},
 			{Name: "writer", Description: "写入型", AllowedTools: []string{"write"}},
 		},
 		HistoryLoader: func(sid string) ([]message.Message, error) {
@@ -2512,14 +2464,17 @@ func TestSubagentTool_ResumeKeepsTypeConfig(t *testing.T) {
 		}
 	}
 
-	// 追加提示词随缓存类型一起沿用。
-	if !strings.Contains(requestContent(&resumeReq), "只做只读检索") {
-		t.Fatalf("resume request missing cached append prompt:\n%s", requestContent(&resumeReq))
+	// 类型的身份 system prompt 随缓存类型一起沿用。
+	if !strings.Contains(resumeReq.System, "只做只读检索") {
+		t.Fatalf("resume request system missing cached type identity:\n%s", resumeReq.System)
 	}
 
-	// system prompt 与首次派发/主 runtime 一致，不漂移。
-	if resumeReq.System != mm.calls[0].System {
-		t.Fatalf("resume system prompt drifted: resume=%q main=%q", resumeReq.System, mm.calls[0].System)
+	// system prompt 与首次派发一致（沿用缓存的类型身份），且不同于主 runtime 身份。
+	if resumeReq.System != firstReq.System {
+		t.Fatalf("resume system prompt drifted from first dispatch: resume=%q first=%q", resumeReq.System, firstReq.System)
+	}
+	if resumeReq.System == mm.calls[0].System {
+		t.Fatalf("resume system prompt should not equal main identity: %q", resumeReq.System)
 	}
 }
 
@@ -2737,5 +2692,253 @@ func TestRuntimeClearSubagentSession(t *testing.T) {
 	}
 	if len(mm.calls) != callsBefore {
 		t.Fatalf("rejected resume should not dispatch a sub agent: calls before=%d after=%d", callsBefore, len(mm.calls))
+	}
+}
+
+// subagentDeltaModel 是一个按请求路由的流式 mock：含 [Subtask] 的请求来自子
+// runtime，产出子 agent 的 delta；其余请求来自主 runtime——首次产出 subagent 工具
+// 调用，之后产出主 agent 的 delta。用于验证子 agent 的流式输出不会混入主事件流。
+type subagentDeltaModel struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (m *subagentDeltaModel) Complete(ctx context.Context, req model.Request) (*model.Response, error) {
+	m.mu.Lock()
+	m.calls++
+	idx := m.calls
+	m.mu.Unlock()
+	return m.response(req, idx), nil
+}
+
+func (m *subagentDeltaModel) response(req model.Request, idx int) *model.Response {
+	if hasSubtaskRequest(req) {
+		return &model.Response{
+			Message:    model.Message{Role: "assistant", Content: "CHILD_FINAL"},
+			StopReason: "end_turn",
+		}
+	}
+	if idx == 1 {
+		return &model.Response{
+			Message: model.Message{Role: "assistant", ToolCalls: []model.ToolCall{{
+				ID: "call-1", Name: subagentToolName,
+				Arguments: map[string]any{"name": "child", "instruction": "do it"},
+			}}},
+			StopReason: "tool_use",
+		}
+	}
+	return &model.Response{
+		Message:    model.Message{Role: "assistant", Content: "MAIN_FINAL"},
+		StopReason: "end_turn",
+	}
+}
+
+func (m *subagentDeltaModel) CompleteStream(ctx context.Context, req model.Request, cb model.StreamHandler) error {
+	m.mu.Lock()
+	m.calls++
+	idx := m.calls
+	m.mu.Unlock()
+	resp := m.response(req, idx)
+	if cb == nil {
+		return nil
+	}
+	switch {
+	case hasSubtaskRequest(req):
+		if err := cb(model.StreamResult{Delta: "CHILD_DELTA"}); err != nil {
+			return err
+		}
+	case idx != 1:
+		if err := cb(model.StreamResult{Delta: "MAIN_DELTA"}); err != nil {
+			return err
+		}
+	}
+	return cb(model.StreamResult{Final: true, Response: resp})
+}
+
+func hasSubtaskRequest(req model.Request) bool {
+	for _, msg := range req.Messages {
+		if strings.Contains(msg.Content, "[Subtask]") {
+			return true
+		}
+	}
+	return false
+}
+
+type subagentDeltaFactory struct{ m model.Model }
+
+func (f subagentDeltaFactory) Model(context.Context) (model.Model, error) { return f.m, nil }
+
+// TestSubagentTool_ChildStreamDoesNotLeakIntoMainStream 验证主会话用 RunStream 派发
+// 子 agent 时，子 agent 的流式 delta 不会混入主事件流。子 agent 在隔离 context 中
+// 运行（流式出口被置为 no-op），用户可见的主回复只含主 agent 文本。若有人把主会话的
+// 流式出口原样传给子 runtime，这里会观察到子 agent 的 delta。
+func TestSubagentTool_ChildStreamDoesNotLeakIntoMainStream(t *testing.T) {
+	m := &subagentDeltaModel{}
+	rt, err := New(context.Background(), Options{
+		ModelFactory:        subagentDeltaFactory{m: m},
+		ProjectRoot:         t.TempDir(),
+		SystemPrompt:        "main",
+		EnabledBuiltinTools: []string{"read", "subagent"},
+		AutoCompact:         CompactConfig{Enabled: false},
+	})
+	if err != nil {
+		t.Fatalf("create main runtime: %v", err)
+	}
+	defer rt.Close()
+
+	ch, err := rt.RunStream(context.Background(), Request{SessionID: "s", Prompt: "go"})
+	if err != nil {
+		t.Fatalf("RunStream: %v", err)
+	}
+	var deltas []string
+	for ev := range ch {
+		if ev.Delta != nil {
+			deltas = append(deltas, ev.Delta.Text)
+		}
+	}
+	if len(deltas) == 0 {
+		t.Fatal("main stream produced no deltas")
+	}
+	joined := strings.Join(deltas, "")
+	if !strings.Contains(joined, "MAIN_DELTA") {
+		t.Fatalf("main stream missing main agent delta, got: %v", deltas)
+	}
+	if strings.Contains(joined, "CHILD_DELTA") {
+		t.Fatalf("sub-agent delta leaked into main stream: %v", deltas)
+	}
+}
+
+// TestSubagentTool_CompletionHandlerReceivesIsolatedHistory 验证宿主注册的
+// SubagentCompletionHandler 在子 agent 完成后被调用一次，且携带的是子会话自身的
+// 隔离历史（含 [Subtask]、不含主会话内容），并带上子会话标识。这条测试守住
+// "宿主能拿到完整子会话上下文用于排查"这一意图：若回调退化为只给主会话历史、
+// 或漏带标识，外层就无法把子会话单独落盘。
+func TestSubagentTool_CompletionHandlerReceivesIsolatedHistory(t *testing.T) {
+	ctx := context.Background()
+	mm := &recordingMockModel{}
+
+	sessionID := "test-session"
+	var got []SubagentCompletion
+	mainOpts := Options{
+		ModelFactory:        recordingMockModelFactory{model: mm},
+		ProjectRoot:         t.TempDir(),
+		SystemPrompt:        "you are a helpful assistant",
+		EnabledBuiltinTools: []string{"read"},
+		HistoryLoader: func(sid string) ([]message.Message, error) {
+			if sid == sessionID {
+				return []message.Message{{Role: "user", Content: "MAIN_SECRET"}}, nil
+			}
+			return nil, nil
+		},
+		AutoCompact:               CompactConfig{Enabled: false},
+		SubagentCompletionHandler: func(c SubagentCompletion) { got = append(got, c) },
+	}
+
+	mainRT, err := New(ctx, mainOpts)
+	if err != nil {
+		t.Fatalf("create main runtime: %v", err)
+	}
+	defer mainRT.Close()
+
+	if _, err := mainRT.Run(ctx, Request{SessionID: sessionID, Prompt: "ping"}); err != nil {
+		t.Fatalf("main run: %v", err)
+	}
+
+	st := newSubagentTool(mainOpts)
+	st.bindRuntime(mainRT)
+	res, err := st.Execute(WithToolSessionID(ctx, sessionID), map[string]any{
+		"name":        "analyzer",
+		"instruction": "summarize",
+	})
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if !res.Success {
+		t.Fatalf("expected subagent success, got: %s", res.Output)
+	}
+
+	if len(got) != 1 {
+		t.Fatalf("expected exactly 1 completion callback, got %d", len(got))
+	}
+	c := got[0]
+	if c.MainSessionID != sessionID {
+		t.Fatalf("completion main session = %q, want %q", c.MainSessionID, sessionID)
+	}
+	if c.SubSessionID == "" || c.SubSessionID == sessionID {
+		t.Fatalf("completion sub session id invalid: %q", c.SubSessionID)
+	}
+	if c.Name != "analyzer" {
+		t.Fatalf("completion name = %q, want analyzer", c.Name)
+	}
+	if c.Err != nil {
+		t.Fatalf("completion err = %v, want nil", c.Err)
+	}
+	if len(c.History) == 0 {
+		t.Fatal("completion history is empty")
+	}
+	var joined strings.Builder
+	for _, m := range c.History {
+		joined.WriteString(m.Content)
+	}
+	if !strings.Contains(joined.String(), "[Subtask] analyzer") {
+		t.Fatalf("completion history missing delegation message: %q", joined.String())
+	}
+	if strings.Contains(joined.String(), "MAIN_SECRET") {
+		t.Fatalf("completion history leaked main session content: %q", joined.String())
+	}
+}
+
+// TestSubagentTool_CompletionHandlerFiresOnFailure 验证子 agent 执行失败时回调
+// 依然触发且带错误——失败的子会话恰恰是最需要排查的对象，漏掉它等于丢掉了
+// 最有价值的诊断信息。
+func TestSubagentTool_CompletionHandlerFiresOnFailure(t *testing.T) {
+	ctx := context.Background()
+	mm := &recordingMockModel{}
+	failingModel := &failingMockModel{recordingMockModel: mm, failAfter: 1}
+
+	sessionID := "test-session"
+	var got []SubagentCompletion
+	mainOpts := Options{
+		ModelFactory:        recordingMockModelFactory{model: failingModel},
+		ProjectRoot:         t.TempDir(),
+		SystemPrompt:        "you are a helpful assistant",
+		EnabledBuiltinTools: []string{"read"},
+		HistoryLoader: func(sid string) ([]message.Message, error) {
+			if sid == sessionID {
+				return []message.Message{{Role: "user", Content: "hello"}}, nil
+			}
+			return nil, nil
+		},
+		AutoCompact:               CompactConfig{Enabled: false},
+		SubagentCompletionHandler: func(c SubagentCompletion) { got = append(got, c) },
+	}
+
+	mainRT, err := New(ctx, mainOpts)
+	if err != nil {
+		t.Fatalf("create main runtime: %v", err)
+	}
+	defer mainRT.Close()
+
+	if _, err := mainRT.Run(ctx, Request{SessionID: sessionID, Prompt: "ping"}); err != nil {
+		t.Fatalf("main run: %v", err)
+	}
+
+	st := newSubagentTool(mainOpts)
+	st.bindRuntime(mainRT)
+	res, err := st.Execute(WithToolSessionID(ctx, sessionID), map[string]any{
+		"name":        "analyzer",
+		"instruction": "this will fail",
+	})
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if res.Success {
+		t.Fatalf("expected failure, got success: %s", res.Output)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected exactly 1 completion callback on failure, got %d", len(got))
+	}
+	if got[0].Err == nil {
+		t.Fatal("completion err = nil, want non-nil on failure")
 	}
 }

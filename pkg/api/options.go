@@ -114,6 +114,17 @@ type SubagentRegistration struct {
 	Handler    subagents.Handler
 }
 
+// SubagentCompletion 描述一次子 agent 完成事件。History 是该子会话自身的隔离历史
+// 快照（不含主会话历史），宿主可据此在 SDK 之外持久化子会话，便于排查问题。
+type SubagentCompletion struct {
+	MainSessionID string
+	SubSessionID  string
+	Name          string
+	AgentType     string
+	History       []message.Message
+	Err           error
+}
+
 type ModelFactory interface {
 	Model(ctx context.Context) (model.Model, error)
 }
@@ -174,6 +185,10 @@ type Options struct {
 	HookTimeout            time.Duration
 	DisableSafetyHook      bool
 	DisableSubagentSummary bool
+
+	// SubagentCompletionHandler 在每次子 agent 完成时被调用（同步派发与后台任务都会触发），
+	// 携带该子会话的隔离历史快照，供宿主在 SDK 之外落盘或观测。为 nil 时不回调。
+	SubagentCompletionHandler func(SubagentCompletion)
 
 	Skills           []SkillRegistration
 	Subagents        []SubagentRegistration
