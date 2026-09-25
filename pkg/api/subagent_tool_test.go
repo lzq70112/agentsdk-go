@@ -87,6 +87,48 @@ func TestSubagentTool_NameAndSchema(t *testing.T) {
 	}
 }
 
+// TestSubagentTool_SyncDispatchSurfacesSubSessionID 验证同步派发也把 sub_session_id
+// 回显进 Output（不只是 Data）。模型只能看到 Output，id 必须出现在这里才能被用于后续
+// 追问/续跑；否则同步派发的子会话对模型不可达、无法复用。这条测试守住"同步派发同样
+// 可复用"这一意图：若有人把 id 挪回 Data、或删掉回显，同步复用即失效。
+func TestSubagentTool_SyncDispatchSurfacesSubSessionID(t *testing.T) {
+	ctx := context.Background()
+	mm := &recordingMockModel{}
+	opts := Options{
+		ModelFactory:        recordingMockModelFactory{model: mm},
+		ProjectRoot:         t.TempDir(),
+		SystemPrompt:        "main",
+		EnabledBuiltinTools: []string{"read"},
+		AutoCompact:         CompactConfig{Enabled: false},
+	}
+	rt, err := New(ctx, opts)
+	if err != nil {
+		t.Fatalf("create runtime: %v", err)
+	}
+	defer rt.Close()
+
+	st := newSubagentTool(opts)
+	st.bindRuntime(rt)
+	res, err := st.Execute(WithToolSessionID(ctx, "s"), map[string]any{
+		"name":        "child",
+		"instruction": "干活",
+	})
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if !res.Success {
+		t.Fatalf("expected success, got: %s", res.Output)
+	}
+	data, _ := res.Data.(map[string]any)
+	id, _ := data["sub_session_id"].(string)
+	if id == "" {
+		t.Fatal("sync dispatch did not return sub_session_id in Data")
+	}
+	if !strings.Contains(res.Output, id) {
+		t.Fatalf("sync dispatch Output must surface sub_session_id for reuse; output=%q id=%q", res.Output, id)
+	}
+}
+
 func TestSubagentTool_Execute_RequiresSessionID(t *testing.T) {
 	st := newSubagentTool(Options{})
 	res, err := st.Execute(context.Background(), map[string]any{
@@ -1641,11 +1683,17 @@ func TestSubagentTool_PublishesLifecycleEvents(t *testing.T) {
 	if completePayload.AgentType != "explorer" {
 		t.Fatalf("complete payload agent type = %q, want explorer", completePayload.AgentType)
 	}
-	if completePayload.Output != res.Output {
-		t.Fatalf("complete payload output = %q, want %q", completePayload.Output, res.Output)
+	// 完成事件携带子 agent 的原始输出；工具结果 Output 在此基础上追加了
+	// [sub_session_id: ...] 后缀（模型只能看 Output，id 必须出现在那里）。故二者
+	// 不再全等，而是"工具结果以子 agent 原始输出为前缀"。
+	if !strings.HasPrefix(res.Output, completePayload.Output) {
+		t.Fatalf("complete payload output = %q, should be the prefix of tool result output %q", completePayload.Output, res.Output)
 	}
-	if completePayload.OutputLength != len(res.Output) {
-		t.Fatalf("complete payload output length = %d, want %d", completePayload.OutputLength, len(res.Output))
+	if strings.Contains(completePayload.Output, subSessionID) {
+		t.Fatalf("complete payload output should be the sub-agent output only, without the tool-result id suffix: %q", completePayload.Output)
+	}
+	if completePayload.OutputLength != len(completePayload.Output) {
+		t.Fatalf("complete payload output length = %d, want %d", completePayload.OutputLength, len(completePayload.Output))
 	}
 	if completePayload.Duration < 5*time.Millisecond {
 		t.Fatalf("complete payload duration = %s, want >= 5ms（mock 睡眠 10ms，耗时应为实测值而非占位）", completePayload.Duration)

@@ -416,9 +416,11 @@ func (t *subagentTool) Execute(ctx context.Context, params map[string]any) (*too
 			Output:  err.Error(),
 		}, nil
 	}
+	// 把 sub_session_id 一并写进 Output：模型只能看到 Output，看不到 Data，id 必须
+	// 出现在这里才能被用于后续追问/续跑，否则同步派发的子会话对模型不可达。
 	return &tool.ToolResult{
 		Success: true,
-		Output:  output,
+		Output:  fmt.Sprintf("%s\n\n[sub_session_id: %s]", output, subSessionID),
 		Data:    map[string]any{"sub_session_id": subSessionID},
 	}, nil
 }
