@@ -16,6 +16,30 @@ import (
 	toolbuiltin "github.com/lzq70112/agentsdk-go/pkg/tool/builtin"
 )
 
+type toolSessionIDKey string
+
+const toolSessionIDCtxKey toolSessionIDKey = "agentsdk.tool.sessionID"
+
+// WithToolSessionID injects the current session id into the context so that
+// custom tools (e.g. a subagent tool) can retrieve it via ToolSessionIDFromContext.
+func WithToolSessionID(ctx context.Context, sessionID string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, toolSessionIDCtxKey, sessionID)
+}
+
+// ToolSessionIDFromContext returns the session id that the runtime associated
+// with the current tool execution. It is intended for custom tools that need
+// to look up the calling session's history.
+func ToolSessionIDFromContext(ctx context.Context) (string, bool) {
+	if ctx == nil {
+		return "", false
+	}
+	id, ok := ctx.Value(toolSessionIDCtxKey).(string)
+	return id, ok
+}
+
 type runtimeToolExecutor struct {
 	executor  *tool.Executor
 	hooks     *runtimeHookAdapter
@@ -158,6 +182,7 @@ func (t *runtimeToolExecutor) execute(ctx context.Context, call model.ToolCall, 
 		}
 	}
 
+	ctx = WithToolSessionID(ctx, t.sessionID)
 	result, err := t.executor.Execute(ctx, callSpec)
 	if err != nil {
 		runtimeLogger.warnf("[api:toolExec] tool=%s id=%s session=%s failed: %v", call.Name, call.ID, t.sessionID, err)

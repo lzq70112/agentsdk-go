@@ -640,6 +640,7 @@ customMiddleware := middleware.Funcs{
 - [Getting Started](docs/getting-started.md) - Step-by-step tutorial
 - [Security](docs/security.md) - Security configuration guide
 - [Custom Tools Guide](docs/custom-tools-guide.md) - Custom tool registration and usage
+- [Subagents Guide](docs/subagents-guide.md) - Fork-based subagent tool vs native routing, and how to pick
 - [Trace System](docs/trace-system.md) - OpenTelemetry and HTTP trace setup
 - [Smart Defaults](docs/smart-defaults.md) - Auto-configuration by EntryPoint
 - [HTTP API Guide](examples/03-http/README.md) - HTTP server instructions

@@ -47,7 +47,7 @@ func TestRegisterMCPServersNotBlockedByBuiltinWhitelist(t *testing.T) {
 
 	reg := tool.NewRegistry()
 	// Builtins disabled; MCP should still attempt registration.
-	if err := registerTools(reg, Options{ProjectRoot: t.TempDir(), EnabledBuiltinTools: []string{}}, nil, nil); err != nil {
+	if _, err := registerTools(reg, Options{ProjectRoot: t.TempDir(), EnabledBuiltinTools: []string{}}, nil, nil); err != nil {
 		t.Fatalf("register tools: %v", err)
 	}
 

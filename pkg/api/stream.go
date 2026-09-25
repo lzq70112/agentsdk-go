@@ -28,6 +28,9 @@ const (
 	EventToolExecutionOutput = "tool_execution_output"
 	EventToolExecutionResult = "tool_execution_result"
 	EventError               = "error"
+	// EventCanceled 表示当前回合被用户主动取消（经 Runtime.CancelSession）。
+	// 与 EventError 区分，便于调用方干净收尾而非按失败处理。
+	EventCanceled = "canceled"
 )
 
 // StreamEvent represents a single SSE dispatch compatible with Anthropic's schema

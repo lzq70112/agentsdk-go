@@ -15,9 +15,10 @@ import (
 	toolbuiltin "github.com/lzq70112/agentsdk-go/pkg/tool/builtin"
 )
 
-func registerTools(registry *tool.Registry, opts Options, settings *config.Settings, skReg *skills.Registry) error {
+func registerTools(registry *tool.Registry, opts Options, settings *config.Settings, skReg *skills.Registry) (*subagentTool, error) {
 	entry := effectiveEntryPoint(opts)
 	tools := opts.Tools
+	var subagent *subagentTool
 
 	if len(tools) == 0 {
 		sandboxDisabled := settings != nil && settings.Sandbox != nil && settings.Sandbox.Enabled != nil && !*settings.Sandbox.Enabled
@@ -29,6 +30,15 @@ func registerTools(registry *tool.Registry, opts Options, settings *config.Setti
 		names := builtinOrder(entry)
 		selectedNames := filterBuiltinNames(opts.EnabledBuiltinTools, names)
 		for _, name := range selectedNames {
+			if canonicalToolName(name) == subagentToolName {
+				subagent = newSubagentTool(opts)
+				// 查询/停止工具与 subagent 同源：共享任务注册表，且仅在启用
+				// subagent 时出现，子 runtime 中随 subagentDisabled 一起退化为 no-op。
+				tools = append(tools, subagent,
+					&subagentStatusTool{owner: subagent, disabled: opts.subagentDisabled},
+					&subagentStopTool{owner: subagent, disabled: opts.subagentDisabled})
+				continue
+			}
 			ctor := factories[name]
 			if ctor == nil {
 				continue
@@ -83,11 +93,11 @@ func registerTools(registry *tool.Registry, opts Options, settings *config.Setti
 		}
 		seen[canon] = struct{}{}
 		if err := registry.Register(impl); err != nil {
-			return fmt.Errorf("api: register tool %s: %w", impl.Name(), err)
+			return nil, fmt.Errorf("api: register tool %s: %w", impl.Name(), err)
 		}
 	}
 
-	return nil
+	return subagent, nil
 }
 
 func withToolSearch(tools []tool.Tool) []tool.Tool {
@@ -178,7 +188,7 @@ func builtinToolFactories(root string, sandboxDisabled bool, entry EntryPoint, s
 
 func builtinOrder(entry EntryPoint) []string {
 	_ = entry
-	return []string{"bash", "read", "write", "edit", "glob", "grep", "skill"}
+	return []string{"bash", "read", "write", "edit", "glob", "grep", "skill", "subagent"}
 }
 
 func filterBuiltinNames(enabled []string, order []string) []string {

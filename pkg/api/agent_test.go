@@ -311,7 +311,7 @@ func TestRegisterToolsFiltersDisallowedTools(t *testing.T) {
 		Tools:           []tool.Tool{allowed, blocked},
 		DisallowedTools: []string{"FAIL"},
 	}
-	if err := registerTools(reg, opts, nil, nil); err != nil {
+	if _, err := registerTools(reg, opts, nil, nil); err != nil {
 		t.Fatalf("register tools: %v", err)
 	}
 	if _, err := reg.Get(allowed.Name()); err != nil {

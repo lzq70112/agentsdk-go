@@ -204,11 +204,11 @@ func TestProjectConfigFromSettings(t *testing.T) {
 func TestRegisterToolsUsesDefaultImplementations(t *testing.T) {
 	registry := tool.NewRegistry()
 	opts := Options{ProjectRoot: t.TempDir()}
-	if err := registerTools(registry, opts, nil, nil); err != nil {
+	if _, err := registerTools(registry, opts, nil, nil); err != nil {
 		t.Fatalf("register tools: %v", err)
 	}
 	tools := registry.List()
-	expected := []string{"bash", "read", "write", "edit", "glob", "grep", "skill"}
+	expected := []string{"bash", "read", "write", "edit", "glob", "grep", "skill", "subagent", "subagent_status", "subagent_stop"}
 	if len(tools) != len(expected) {
 		t.Fatalf("expected %d default tools, got %d", len(expected), len(tools))
 	}
@@ -230,7 +230,7 @@ func TestRegisterToolsRespectsEnabledWhitelist(t *testing.T) {
 	registry := tool.NewRegistry()
 	root := t.TempDir()
 	opts := Options{ProjectRoot: root, EnabledBuiltinTools: []string{"bash", "grep"}}
-	if err := registerTools(registry, opts, nil, nil); err != nil {
+	if _, err := registerTools(registry, opts, nil, nil); err != nil {
 		t.Fatalf("register tools: %v", err)
 	}
 	tools := registry.List()
@@ -252,7 +252,7 @@ func TestRegisterToolsDisablesAllBuiltinsWhenEmptyWhitelist(t *testing.T) {
 	registry := tool.NewRegistry()
 	root := t.TempDir()
 	opts := Options{ProjectRoot: root, EnabledBuiltinTools: []string{}}
-	if err := registerTools(registry, opts, nil, nil); err != nil {
+	if _, err := registerTools(registry, opts, nil, nil); err != nil {
 		t.Fatalf("register tools: %v", err)
 	}
 	if got := len(registry.List()); got != 0 {
@@ -265,7 +265,7 @@ func TestRegisterToolsSkipsDuplicateNames(t *testing.T) {
 	root := t.TempDir()
 	dup := &namedTool{name: "Bash"}
 	opts := Options{ProjectRoot: root, CustomTools: []tool.Tool{dup}}
-	if err := registerTools(registry, opts, nil, nil); err != nil {
+	if _, err := registerTools(registry, opts, nil, nil); err != nil {
 		t.Fatalf("register tools: %v", err)
 	}
 	tools := registry.List()
@@ -281,7 +281,7 @@ func TestRegisterToolsSkipsDuplicateNames(t *testing.T) {
 func TestRegisterToolsWhitelistCaseInsensitive(t *testing.T) {
 	registry := tool.NewRegistry()
 	opts := Options{ProjectRoot: t.TempDir(), EnabledBuiltinTools: []string{"BASH", "GrEp", "READ"}}
-	if err := registerTools(registry, opts, nil, nil); err != nil {
+	if _, err := registerTools(registry, opts, nil, nil); err != nil {
 		t.Fatalf("register tools: %v", err)
 	}
 	seen := map[string]struct{}{}
@@ -301,7 +301,7 @@ func TestRegisterToolsWhitelistCaseInsensitive(t *testing.T) {
 func TestRegisterToolsIgnoresUnknownWhitelistEntries(t *testing.T) {
 	registry := tool.NewRegistry()
 	opts := Options{ProjectRoot: t.TempDir(), EnabledBuiltinTools: []string{"missing"}}
-	if err := registerTools(registry, opts, nil, nil); err != nil {
+	if _, err := registerTools(registry, opts, nil, nil); err != nil {
 		t.Fatalf("register tools: %v", err)
 	}
 	if got := len(registry.List()); got != 0 {
@@ -313,7 +313,7 @@ func TestRegisterToolsAppendsCustomTools(t *testing.T) {
 	registry := tool.NewRegistry()
 	custom := &namedTool{name: "custom"}
 	opts := Options{ProjectRoot: t.TempDir(), EnabledBuiltinTools: []string{}, CustomTools: []tool.Tool{nil, custom}}
-	if err := registerTools(registry, opts, nil, nil); err != nil {
+	if _, err := registerTools(registry, opts, nil, nil); err != nil {
 		t.Fatalf("register tools: %v", err)
 	}
 	tools := registry.List()
@@ -331,7 +331,7 @@ func TestRegisterToolsLegacyToolsOverride(t *testing.T) {
 		EnabledBuiltinTools: []string{"bash"},
 		CustomTools:         []tool.Tool{&namedTool{name: "custom"}},
 	}
-	if err := registerTools(registry, opts, nil, nil); err != nil {
+	if _, err := registerTools(registry, opts, nil, nil); err != nil {
 		t.Fatalf("register tools: %v", err)
 	}
 	tools := registry.List()
@@ -343,7 +343,7 @@ func TestRegisterToolsLegacyToolsOverride(t *testing.T) {
 func TestRegisterToolsSkipsNilEntries(t *testing.T) {
 	registry := tool.NewRegistry()
 	opts := Options{ProjectRoot: t.TempDir(), Tools: []tool.Tool{nil, &namedTool{name: "echo"}}}
-	if err := registerTools(registry, opts, nil, nil); err != nil {
+	if _, err := registerTools(registry, opts, nil, nil); err != nil {
 		t.Fatalf("register tools: %v", err)
 	}
 	tools := registry.List()

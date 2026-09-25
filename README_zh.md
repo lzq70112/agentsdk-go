@@ -630,6 +630,7 @@ mw := middleware.Funcs{
 - [入门指南](docs/getting-started.md) - 分步教程
 - [安全实践](docs/security.md) - 安全配置指南
 - [自定义工具指南](docs/custom-tools-guide.md) - 自定义工具注册与使用
+- [Subagents 指南](docs/subagents-guide.md) - fork 型 subagent tool 与原生路由机制对比及选择指引
 - [Trace 系统](docs/trace-system.md) - OpenTelemetry 与 HTTP trace 配置
 - [Smart Defaults](docs/smart-defaults.md) - 按 EntryPoint 自动配置
 - [HTTP API 指南](examples/03-http/README.md) - HTTP 服务器使用说明

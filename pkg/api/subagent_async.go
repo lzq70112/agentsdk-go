@@ -60,28 +60,39 @@ func completionStatus(status subagents.Status) string {
 }
 
 func formatSubagentSummary(status subagents.Status) string {
+	return formatSubagentResultMessage(status.Name, status.Instruction, completionStatus(status), status.Output, status.Error)
+}
+
+// formatSubagentResultMessage 拼装注入主会话 history 的子 agent 完成结果消息。
+// subMgr 的同步派发与内置 subagent tool 的后台任务共用，保证文案一致。
+func formatSubagentResultMessage(name, instruction, status, output, errText string) string {
 	var builder strings.Builder
 	builder.WriteString("[Subagent Result: ")
-	builder.WriteString(strings.TrimSpace(status.Name))
+	builder.WriteString(strings.TrimSpace(name))
 	builder.WriteString("]\nTask: ")
-	builder.WriteString(strings.TrimSpace(status.Instruction))
+	builder.WriteString(strings.TrimSpace(instruction))
 	builder.WriteString("\nStatus: ")
-	builder.WriteString(completionStatus(status))
+	builder.WriteString(status)
 	builder.WriteString("\nOutput: ")
-	builder.WriteString(truncateString(status.Output, subagentOutputLimit))
-	if errText := strings.TrimSpace(status.Error); errText != "" {
+	builder.WriteString(truncateString(output, subagentOutputLimit))
+	if trimmed := strings.TrimSpace(errText); trimmed != "" {
 		builder.WriteString("\nError: ")
-		builder.WriteString(errText)
+		builder.WriteString(trimmed)
 	}
 	return builder.String()
 }
 
 func subagentSummaryMetadata(status subagents.Status) map[string]any {
+	return subagentResultMetadata(status.TaskID, status.Name)
+}
+
+// subagentResultMetadata 标注合成消息的来源，供平台侧识别与过滤。
+func subagentResultMetadata(taskID, name string) map[string]any {
 	return map[string]any{
 		"api.synthetic":      true,
 		"api.synthetic_type": "subagent_result",
-		"subagent.task_id":   status.TaskID,
-		"subagent.name":      status.Name,
+		"subagent.task_id":   taskID,
+		"subagent.name":      name,
 	}
 }
 

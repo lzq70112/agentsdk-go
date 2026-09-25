@@ -177,6 +177,7 @@ type Options struct {
 
 	Skills           []SkillRegistration
 	Subagents        []SubagentRegistration
+	AgentTypes       []AgentType
 	Sandbox          SandboxOptions
 	AutoCompact      CompactConfig
 	OTEL             OTELConfig
@@ -187,6 +188,10 @@ type Options struct {
 	skReg            *skills.Registry
 	subMgr           *subagents.Manager
 	tracer           Tracer
+	// subagentDisabled 是 SDK 内部字段：为 true 时该 runtime 内的 subagent tool
+	// 退化为"调用即拒绝"的 no-op（Name/Description/Schema 不变以命中 prefix cache），
+	// 用于在子 runtime 中硬阻断孙 agent 派生。仅 buildSubOptions 会设置它。
+	subagentDisabled bool
 }
 
 func DefaultSubagentDefinitions() []subagents.Definition {
@@ -395,6 +400,16 @@ func (o Options) frozen() Options {
 			subCopy[i].Definition = def
 		}
 		o.Subagents = subCopy
+	}
+	if len(o.AgentTypes) > 0 {
+		typesCopy := make([]AgentType, len(o.AgentTypes))
+		for i, at := range o.AgentTypes {
+			typesCopy[i] = at
+			if len(at.AllowedTools) > 0 {
+				typesCopy[i].AllowedTools = append([]string(nil), at.AllowedTools...)
+			}
+		}
+		o.AgentTypes = typesCopy
 	}
 
 	o.Sandbox = freezeSandboxOptions(o.Sandbox)

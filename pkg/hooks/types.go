@@ -106,4 +106,8 @@ type SubagentCompletePayload struct {
 	Status string // "success" | "error"
 	Output string // truncated to 2000 chars
 	Error  string
+	// 以下字段由内置 subagent tool 的类型化派发携带；原生异步机制留零值。
+	AgentType    string        // 子 agent 类型名
+	Duration     time.Duration // 子 agent 执行耗时
+	OutputLength int           // 输出原始长度（截断前）
 }

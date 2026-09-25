@@ -69,6 +69,7 @@ type Runtime struct {
 	histories *historyStore
 	compactor *compactor
 	deferred  *deferredToolState
+	subagent  *subagentTool
 
 	mu sync.RWMutex
 
@@ -77,6 +78,10 @@ type Runtime struct {
 	closeOnce sync.Once
 	closeErr  error
 	closed    bool
+
+	// activeMu 保护 activeRuns（会话 → 在途回合），供 CancelSession 定位并取消。
+	activeMu   sync.Mutex
+	activeRuns map[string]*activeRun
 }
 
 // New instantiates a unified runtime bound to the provided options.
@@ -138,7 +143,8 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	opts.subMgr = subMgr
 
 	registry := tool.NewRegistry()
-	if err := registerTools(registry, opts, settings, opts.skReg); err != nil {
+	subagent, err := registerTools(registry, opts, settings, opts.skReg)
+	if err != nil {
 		return nil, err
 	}
 	mcpServers := collectMCPServers(settings, opts.MCPServers)
@@ -183,6 +189,9 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		histories: histories,
 		compactor: compactor,
 		deferred:  newDeferredToolState(registry),
+	}
+	if subagent != nil {
+		subagent.bindRuntime(rt)
 	}
 	rt.bindSubagentCallbacks()
 	return rt, nil
@@ -244,7 +253,20 @@ func (rt *Runtime) Run(ctx context.Context, req Request) (*Response, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// 登记可取消的在途回合：用户经 CancelSession 取消时，把 history 回滚到
+	// 回合开始前（含本轮用户消息），并把结果报告为 context.Canceled。
+	runCtx, cancel := context.WithCancel(prep.ctx)
+	defer cancel()
+	prep.ctx = runCtx
+	run := rt.beginActiveRun(sessionID, cancel, prep.history.All())
+	defer rt.endActiveRun(run)
+
 	result, err := rt.runAgent(prep)
+	if run.rollbackRequested() && errors.Is(err, context.Canceled) {
+		prep.history.Replace(run.snapshot)
+		return nil, context.Canceled
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -292,6 +314,13 @@ func (rt *Runtime) RunStream(ctx context.Context, req Request) (<-chan StreamEve
 			return
 		}
 
+		// 登记可取消的在途回合：用户经 CancelSession 取消时回滚本轮写入的 history。
+		runCtx, cancel := context.WithCancel(prep.ctx)
+		prep.ctx = runCtx
+		run := rt.beginActiveRun(req.SessionID, cancel, prep.history.All())
+		defer rt.endActiveRun(run)
+		defer cancel()
+
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
@@ -313,7 +342,9 @@ func (rt *Runtime) RunStream(ctx context.Context, req Request) (<-chan StreamEve
 		defer func() {
 			if rt.hooks != nil {
 				reason := "completed"
-				if runErr != nil {
+				if run.rollbackRequested() && errors.Is(runErr, context.Canceled) {
+					reason = "canceled"
+				} else if runErr != nil {
 					reason = "error"
 				}
 				//nolint:errcheck // session end events are non-critical notifications
@@ -329,6 +360,11 @@ func (rt *Runtime) RunStream(ctx context.Context, req Request) (<-chan StreamEve
 		close(progressChan)
 		<-done
 
+		if run.rollbackRequested() && errors.Is(runErr, context.Canceled) {
+			prep.history.Replace(run.snapshot)
+			out <- StreamEvent{Type: EventCanceled, Output: "已取消当前回复"}
+			return
+		}
 		if runErr != nil {
 			isErr := true
 			out <- StreamEvent{Type: EventError, Output: runErr.Error(), IsError: &isErr}
@@ -350,6 +386,13 @@ func (rt *Runtime) Close() error {
 		rt.runMu.Unlock()
 
 		rt.runWG.Wait()
+
+		// 取消在途的异步子任务并等待其退出，避免 goroutine 泄漏。
+		rt.subagent.shutdownAsync()
+		// 清空子会话缓存：缓存生命周期与主 runtime 绑定，关闭即全部释放。
+		rt.subagent.clearSubSessions()
+		// 清空后台任务注册表：在 shutdownAsync 等待全部在途任务退出之后释放。
+		rt.subagent.clearTasks()
 
 		var err error
 		if rt.histories != nil {
@@ -634,6 +677,15 @@ func (rt *Runtime) ClearSession(sessionID string) bool {
 		return false
 	}
 	return rt.histories.Clear(sessionID)
+}
+
+// ClearSubagentSession 清除指定 subagent 子会话的缓存，使其无法再被追问。
+// 返回 true 表示缓存存在并被清除，false 表示没有该子会话记录。
+func (rt *Runtime) ClearSubagentSession(subSessionID string) bool {
+	if rt == nil {
+		return false
+	}
+	return rt.subagent.forgetSubSession(strings.TrimSpace(subSessionID))
 }
 
 // ----------------- internal helpers -----------------
