@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/lzq70112/agentsdk-go/pkg/middleware"
 	"github.com/lzq70112/agentsdk-go/pkg/model"
@@ -203,17 +204,24 @@ func (e progressEmitter) emit(ctx context.Context, evt StreamEvent) {
 
 // chunkString splits s into roughly equal sized pieces without dropping
 // remainder characters to support streaming partial JSON/tool output.
+// Chunks never cut a multi-byte UTF-8 rune: a cut mid-rune leaves invalid
+// UTF-8 that json.Marshal later coerces to U+FFFD, corrupting non-ASCII text.
 func chunkString(s string, size int) []string {
 	if size <= 0 || s == "" {
 		return nil
 	}
 	out := make([]string, 0, (len(s)+size-1)/size)
-	for start := 0; start < len(s); start += size {
-		end := start + size
-		if end > len(s) {
-			end = len(s)
+	for len(s) > size {
+		cut := size
+		for cut > 0 && !utf8.RuneStart(s[cut]) {
+			cut--
 		}
-		out = append(out, s[start:end])
+		if cut == 0 {
+			// size 小于单个 rune 的字节长度：整取一个 rune，保证前进。
+			_, cut = utf8.DecodeRuneInString(s)
+		}
+		out = append(out, s[:cut])
+		s = s[cut:]
 	}
-	return out
+	return append(out, s)
 }

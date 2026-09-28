@@ -2,11 +2,42 @@ package api
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/lzq70112/agentsdk-go/pkg/middleware"
 	"github.com/lzq70112/agentsdk-go/pkg/model"
 )
+
+// TestChunkStringPreservesMultibyteRunes 验证分片不会切断多字节 UTF-8 字符。
+// 工具入参经 chunkString 分片后逐片 json.Marshal 发出，消费端再解码拼接；
+// 若切点落在 rune 中间，json.Marshal 会把半个字符替换为 U+FFFD，使中文等
+// 非 ASCII 文本在流式展示中变成乱码（�/◆）。此测试锁定“重组后文本不变”。
+func TestChunkStringPreservesMultibyteRunes(t *testing.T) {
+	original := `{"name":"x","instruction":"你是一个只读探查任务，目标是把结论返回。"}`
+	// size 覆盖大于、等于、小于单个中文字符（3 字节）的情形。
+	for _, size := range []int{1, 2, 3, 4, 10, 64} {
+		t.Run(fmt.Sprintf("size=%d", size), func(t *testing.T) {
+			var reassembled strings.Builder
+			for _, chunk := range chunkString(original, size) {
+				encoded, err := json.Marshal(chunk)
+				if err != nil {
+					t.Fatalf("marshal chunk: %v", err)
+				}
+				var back string
+				if err := json.Unmarshal(encoded, &back); err != nil {
+					t.Fatalf("unmarshal chunk: %v", err)
+				}
+				reassembled.WriteString(back)
+			}
+			if got := reassembled.String(); got != original {
+				t.Fatalf("分片重组后文本被破坏:\n got: %q\nwant: %q", got, original)
+			}
+		})
+	}
+}
 
 // TestAfterAgentForwardsRealStopReason 验证 AfterAgent 透传 resp.StopReason
 // 而非硬编码 "end_turn"。这是自动续写功能的前提：IM Robot 层需要从
