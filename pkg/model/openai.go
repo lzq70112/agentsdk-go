@@ -50,19 +50,38 @@ const (
 )
 
 // normalizeOpenAIBaseURL ensures OpenAI-compatible endpoints receive a BaseURL
-// ending with "/v1/". Without the trailing slash, openai-go resolves relative
-// paths like "chat/completions" against the final path segment, producing
-// "/chat/completions" instead of the required "/v1/chat/completions".
+// ending with a version segment and a trailing slash. Without the trailing
+// slash, openai-go resolves relative paths like "chat/completions" against the
+// final path segment, producing "/chat/completions" instead of the required
+// "/v1/chat/completions". When the base already carries its own version segment
+// (e.g. Zhipu's "/api/coding/paas/v4"), that segment is kept as-is instead of
+// appending another "/v1", which would yield a bogus double version like
+// "/v4/v1/chat/completions" and a 404.
 func normalizeOpenAIBaseURL(baseURL string) string {
 	baseURL = strings.TrimSpace(baseURL)
 	if baseURL == "" {
 		return ""
 	}
 	baseURL = strings.TrimRight(baseURL, "/")
-	if strings.HasSuffix(baseURL, "/v1") {
+	if hasVersionSegment(baseURL) {
 		return baseURL + "/"
 	}
 	return baseURL + "/v1/"
+}
+
+// hasVersionSegment reports whether the final path segment of baseURL is a
+// version marker such as "v1" or "v4".
+func hasVersionSegment(baseURL string) bool {
+	segment := baseURL[strings.LastIndex(baseURL, "/")+1:]
+	if len(segment) < 2 || segment[0] != 'v' {
+		return false
+	}
+	for _, r := range segment[1:] {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // NewOpenAI constructs a production-ready OpenAI-backed Model.

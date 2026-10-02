@@ -49,6 +49,16 @@ func TestNormalizeOpenAIBaseURL(t *testing.T) {
 			input:    "  https://llm.hyc.com  ",
 			expected: "https://llm.hyc.com/v1/",
 		},
+		{
+			name:     "non-v1 version segment is not given an extra v1",
+			input:    "https://open.bigmodel.cn/api/coding/paas/v4",
+			expected: "https://open.bigmodel.cn/api/coding/paas/v4/",
+		},
+		{
+			name:     "non-v1 version segment with trailing slash stays unchanged",
+			input:    "https://open.bigmodel.cn/api/coding/paas/v4/",
+			expected: "https://open.bigmodel.cn/api/coding/paas/v4/",
+		},
 	}
 
 	for _, tt := range tests {
@@ -190,6 +200,50 @@ func TestOpenAIProvider_SendsRequestsToV1ChatCompletions(t *testing.T) {
 	// BaseURL normalization must produce /v1/chat/completions, not /chat/completions.
 	assert.Equal(t, "/v1/chat/completions", receivedPath)
 	assert.Equal(t, "glm-5.2", receivedBody["model"])
+}
+
+func TestOpenAIProvider_SendsRequestsToCustomVersionSegment(t *testing.T) {
+	var receivedPath string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedPath = r.URL.Path
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		require.NoError(t, json.NewEncoder(w).Encode(openai.ChatCompletion{
+			ID:    "chatcmpl-test",
+			Model: "glm-5.2",
+			Choices: []openai.ChatCompletionChoice{
+				{
+					Index:        0,
+					FinishReason: "stop",
+					Message: openai.ChatCompletionMessage{
+						Role:    "assistant",
+						Content: "Hello from test server",
+					},
+				},
+			},
+		}))
+	}))
+	defer srv.Close()
+
+	// Zhipu-style endpoint whose base already carries a "/v4" version segment.
+	mdl, err := NewOpenAI(OpenAIConfig{
+		APIKey:     "sk-test",
+		BaseURL:    srv.URL + "/api/coding/paas/v4",
+		Model:      "glm-5.2",
+		HTTPClient: srv.Client(),
+	})
+	require.NoError(t, err)
+
+	_, err = mdl.Complete(context.Background(), Request{
+		Messages: []Message{{Role: "user", Content: "hi"}},
+	})
+	require.NoError(t, err)
+
+	// The existing version segment must be kept as-is; appending another "/v1"
+	// would produce "/api/coding/paas/v4/v1/chat/completions" and a 404.
+	assert.Equal(t, "/api/coding/paas/v4/chat/completions", receivedPath)
 }
 
 func TestOpenAIProvider_AssistantMessageWithoutContentAndWithToolCalls(t *testing.T) {
