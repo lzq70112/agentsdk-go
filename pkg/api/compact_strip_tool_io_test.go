@@ -69,8 +69,11 @@ func TestCompactor_StripsToolIOFromCompressionInput(t *testing.T) {
 	}
 
 	req := mdl.requests[0]
-	if !strings.Contains(strings.ToLower(req.System), "prompt compression engine") {
+	if !strings.Contains(strings.ToLower(req.System), "continuation summary") {
 		t.Fatalf("unexpected compression system prompt: %q", req.System)
+	}
+	if req.MaxTokens != 20000 {
+		t.Fatalf("expected compaction MaxTokens 20000, got %d", req.MaxTokens)
 	}
 	for _, msg := range req.Messages {
 		if strings.EqualFold(msg.Role, "tool") {
@@ -102,5 +105,23 @@ func TestCompactor_NilModelErrors(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "model is nil") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestExtractCompactSummary(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		// 提示词约定模型只输出一个 <summary> 块，块外说明文字必须丢弃。
+		{"tagged", "some preamble\n<summary>\n1. Primary Request and Intent:\nfoo\n</summary>\ntrailing", "1. Primary Request and Intent:\nfoo"},
+		{"untagged falls back", "plain summary text", "plain summary text"},
+		{"unclosed tag falls back to body", "<summary>partial", "partial"},
+	}
+	for _, tc := range cases {
+		if got := extractCompactSummary(tc.in); got != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.name, got, tc.want)
+		}
 	}
 }

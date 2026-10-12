@@ -126,7 +126,7 @@ func (m *compactionDemoModel) Complete(ctx context.Context, req model.Request) (
 		return nil, err
 	}
 
-	if strings.Contains(strings.ToLower(req.System), "prompt compression engine") {
+	if strings.Contains(strings.ToLower(req.System), "continuation summary") {
 		for _, msg := range req.Messages {
 			if strings.EqualFold(msg.Role, "tool") {
 				return nil, errors.New("compaction input must not include tool-role messages")
