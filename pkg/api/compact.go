@@ -133,7 +133,12 @@ func (c *compactor) maybeCompact(ctx context.Context, hist *message.History, mdl
 		return false, nil
 	}
 
-	summary, err := compressMessages(ctx, mdl, stripToolIO(snapshot[:cut]))
+	// 环境事实类合成消息永不压缩：从摘要输入中分离出来，压缩后原样保留。
+	summarySource, rest := partitionSynthetic(snapshot[:cut])
+	if len(rest) == 0 {
+		return false, nil
+	}
+	summary, err := compressMessages(ctx, mdl, stripToolIO(rest))
 	if err != nil {
 		return false, err
 	}
@@ -142,13 +147,14 @@ func (c *compactor) maybeCompact(ctx context.Context, hist *message.History, mdl
 		return false, nil
 	}
 
-	out := make([]message.Message, 0, 1+len(snapshot[cut:]))
+	out := make([]message.Message, 0, 1+len(summarySource)+len(snapshot[cut:]))
 	// 摘要不能作为 system 消息，否则会和真正的 system prompt 在 provider 层合并，
 	// 导致系统提示词被稀释/覆盖。使用 assistant 角色作为历史摘要保留。
 	out = append(out, message.Message{
 		Role:    "assistant",
 		Content: "## Summary\n\n" + summary,
 	})
+	out = append(out, summarySource...)
 	out = append(out, snapshot[cut:]...)
 	hist.Replace(out)
 	runtimeLogger.printf("[compact] executed: before=%d after=%d summaryChars=%d", len(snapshot), len(out), len(summary))

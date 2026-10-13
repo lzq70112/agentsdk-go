@@ -86,11 +86,12 @@ func subagentSummaryMetadata(status subagents.Status) map[string]any {
 	return subagentResultMetadata(status.TaskID, status.Name)
 }
 
-// subagentResultMetadata 标注合成消息的来源，供平台侧识别与过滤。
+// subagentResultMetadata 标注合成消息的来源，供平台侧识别与过滤；
+// synthetic 标记同时是压缩豁免凭证（见 compact_preserve.go）。
 func subagentResultMetadata(taskID, name string) map[string]any {
 	return map[string]any{
-		"api.synthetic":      true,
-		"api.synthetic_type": "subagent_result",
+		metadataSynthetic:    true,
+		metadataSyntheticKey: "subagent_result",
 		"subagent.task_id":   taskID,
 		"subagent.name":      name,
 	}

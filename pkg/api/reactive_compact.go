@@ -49,7 +49,12 @@ func (c *compactor) reactiveCompact(ctx context.Context, hist *message.History, 
 		return didMicroCompact, nil
 	}
 
-	summary, err := compressMessages(ctx, mdl, stripToolIO(snapshot[:cut]))
+	// 环境事实类合成消息永不压缩：从摘要输入中分离出来，压缩后原样保留。
+	summarySource, rest := partitionSynthetic(snapshot[:cut])
+	if len(rest) == 0 {
+		return didMicroCompact, nil
+	}
+	summary, err := compressMessages(ctx, mdl, stripToolIO(rest))
 	if err != nil {
 		return false, err
 	}
@@ -58,8 +63,9 @@ func (c *compactor) reactiveCompact(ctx context.Context, hist *message.History, 
 		return didMicroCompact, nil
 	}
 
-	out := make([]message.Message, 0, 1+len(snapshot[cut:]))
+	out := make([]message.Message, 0, 1+len(summarySource)+len(snapshot[cut:]))
 	out = append(out, message.Message{Role: "system", Content: "## Summary\n\n" + summary})
+	out = append(out, summarySource...)
 	out = append(out, snapshot[cut:]...)
 	hist.Replace(out)
 	return true, nil

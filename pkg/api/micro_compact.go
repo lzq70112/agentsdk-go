@@ -23,6 +23,9 @@ func (c *compactor) maybeMicroCompact(hist *message.History) bool {
 	cut := len(snapshot) - c.cfg.MicroPreserveCount
 	changed := false
 	for i := 0; i < cut; i++ {
+		if isSyntheticMessage(snapshot[i]) {
+			continue // 环境事实类合成消息原样保留，不参与微压缩修剪
+		}
 		if microCompactMessage(&snapshot[i]) {
 			changed = true
 		}
