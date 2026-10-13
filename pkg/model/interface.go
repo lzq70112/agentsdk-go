@@ -81,7 +81,8 @@ type Request struct {
 	SessionID         string
 	MaxTokens         int
 	Temperature       *float64
-	EnablePromptCache bool // Enable prompt caching for system and recent messages
+	ReasoningEffort   string // low, medium, high; overrides the model-level default when set
+	EnablePromptCache bool   // Enable prompt caching for system and recent messages
 }
 
 // Usage reports token accounting for a completion.

@@ -18,15 +18,16 @@ import (
 
 // OpenAIConfig configures the OpenAI-backed Model.
 type OpenAIConfig struct {
-	APIKey       string
-	BaseURL      string // Optional: for Azure or proxies
-	Model        string // e.g., "gpt-4o", "gpt-4-turbo"
-	MaxTokens    int
-	MaxRetries   int
-	System       string
-	Temperature  *float64
-	HTTPClient   *http.Client
-	UseResponses bool // true = /responses API, false = /chat/completions
+	APIKey          string
+	BaseURL         string // Optional: for Azure or proxies
+	Model           string // e.g., "gpt-4o", "gpt-4-turbo"
+	MaxTokens       int
+	MaxRetries      int
+	System          string
+	Temperature     *float64
+	ReasoningEffort string // low, medium, high; empty = leave to model default
+	HTTPClient      *http.Client
+	UseResponses    bool // true = /responses API, false = /chat/completions
 }
 
 type openaiChatCompletions interface {
@@ -35,12 +36,13 @@ type openaiChatCompletions interface {
 }
 
 type openaiModel struct {
-	completions openaiChatCompletions
-	model       string
-	maxTokens   int
-	maxRetries  int
-	system      string
-	temperature *float64
+	completions     openaiChatCompletions
+	model           string
+	maxTokens       int
+	maxRetries      int
+	system          string
+	temperature     *float64
+	reasoningEffort string
 }
 
 const (
@@ -117,12 +119,13 @@ func NewOpenAI(cfg OpenAIConfig) (Model, error) {
 	}
 
 	return &openaiModel{
-		completions: &client.Chat.Completions,
-		model:       modelName,
-		maxTokens:   maxTokens,
-		maxRetries:  retries,
-		system:      strings.TrimSpace(cfg.System),
-		temperature: cfg.Temperature,
+		completions:     &client.Chat.Completions,
+		model:           modelName,
+		maxTokens:       maxTokens,
+		maxRetries:      retries,
+		system:          strings.TrimSpace(cfg.System),
+		temperature:     cfg.Temperature,
+		reasoningEffort: strings.TrimSpace(cfg.ReasoningEffort),
 	}, nil
 }
 
@@ -323,6 +326,14 @@ func (m *openaiModel) buildParams(req Request) openai.ChatCompletionNewParams {
 	}
 	if req.Temperature != nil {
 		params.Temperature = openai.Float(*req.Temperature)
+	}
+
+	effort := req.ReasoningEffort
+	if effort == "" {
+		effort = m.reasoningEffort
+	}
+	if effort != "" {
+		params.ReasoningEffort = shared.ReasoningEffort(effort)
 	}
 
 	if sessionID := strings.TrimSpace(req.SessionID); sessionID != "" {
