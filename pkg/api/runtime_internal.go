@@ -164,6 +164,7 @@ func (rt *Runtime) runLoop(prep preparedRun, mdl model.Model, hookAdapter *runti
 			userMsg.ContentBlocks = convertAPIContentBlocks(prep.contentBlocks)
 		}
 		prep.history.Append(userMsg)
+		rt.observeReminderTick(prep.normalized.SessionID, ClockUserTurns)
 	}
 
 	state := &middleware.State{Values: map[string]any{}}
@@ -301,6 +302,7 @@ func (rt *Runtime) runLoop(prep preparedRun, mdl model.Model, hookAdapter *runti
 			}
 		}
 		prep.history.Append(assistant)
+		rt.observeReminderTick(prep.normalized.SessionID, ClockRounds)
 
 		if err := chain.Execute(ctx, middleware.StageAfterAgent, state); err != nil {
 			runErr = err

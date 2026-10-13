@@ -70,6 +70,7 @@ type Runtime struct {
 	compactor *compactor
 	deferred  *deferredToolState
 	subagent  *subagentTool
+	reminders *reminderEngine
 
 	mu sync.RWMutex
 
@@ -194,6 +195,7 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		histories: histories,
 		compactor: compactor,
 		deferred:  newDeferredToolState(registry),
+		reminders: newReminderEngine(),
 	}
 	if subagent != nil {
 		subagent.bindRuntime(rt)
