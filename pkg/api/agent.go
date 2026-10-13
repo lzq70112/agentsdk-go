@@ -79,9 +79,14 @@ type Runtime struct {
 	closeErr  error
 	closed    bool
 
-	// activeMu 保护 activeRuns（会话 → 在途回合），供 CancelSession 定位并取消。
+	// activeMu 保护 activeRuns（会话 → 在途回合），供 CancelSession 定位并取消；
+	// Inject 也据其判断会话是否忙（BarrierPolicy 语义）。
 	activeMu   sync.Mutex
 	activeRuns map[string]*activeRun
+
+	// injectMu 保护 injectQueues（会话 → DEFER 排队的注入），回合结束时 drain。
+	injectMu     sync.Mutex
+	injectQueues map[string][]Injection
 }
 
 // New instantiates a unified runtime bound to the provided options.

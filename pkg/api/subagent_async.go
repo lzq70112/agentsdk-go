@@ -38,18 +38,20 @@ func (rt *Runtime) handleSubagentCompletion(status subagents.Status) {
 			runtimeLogger.warnf("hooks: subagent completion publish failed: %v", err)
 		}
 	}
-	if rt.opts.DisableSubagentSummary || rt.histories == nil {
+	if rt.opts.DisableSubagentSummary {
 		return
 	}
-	history, ok := rt.histories.Loaded(status.SessionID)
-	if !ok {
-		return
+	if err := rt.Inject(status.SessionID, Injection{
+		Kind:   InjectionKindSubagentResult,
+		Policy: BarrierDefer,
+		Message: message.Message{
+			Role:     "user",
+			Content:  formatSubagentSummary(status),
+			Metadata: subagentSummaryMetadata(status),
+		},
+	}); err != nil {
+		runtimeLogger.warnf("[api:subagent] completion inject failed session=%s task=%s: %v", status.SessionID, status.TaskID, err)
 	}
-	history.Append(message.Message{
-		Role:     "user",
-		Content:  formatSubagentSummary(status),
-		Metadata: subagentSummaryMetadata(status),
-	})
 }
 
 func completionStatus(status subagents.Status) string {

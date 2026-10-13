@@ -38,7 +38,8 @@ func (rt *Runtime) beginActiveRun(sessionID string, cancel context.CancelFunc, s
 }
 
 // endActiveRun 注销在途回合。仅当注册表里仍是同一个 run 时才删除，
-// 避免误删同一会话上后续登记的回合。
+// 避免误删同一会话上后续登记的回合。注销后把该会话 DEFER 排队的注入
+// 落入 history（回合边界交付）。
 func (rt *Runtime) endActiveRun(run *activeRun) {
 	if rt == nil || run == nil {
 		return
@@ -48,6 +49,7 @@ func (rt *Runtime) endActiveRun(run *activeRun) {
 		delete(rt.activeRuns, run.sessionID)
 	}
 	rt.activeMu.Unlock()
+	rt.drainDeferredInjections(run.sessionID)
 }
 
 // rollbackRequested 报告该回合是否被用户主动取消并要求回滚。

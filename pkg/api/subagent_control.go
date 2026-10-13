@@ -168,6 +168,8 @@ func (t *subagentTool) clearTasks() {
 
 // injectAsyncResult 在后台子任务结束后把结果注入主会话 history，使主 agent 在
 // 下一轮对话中直接感知任务结果。与 subMgr 的完成回注共用格式化实现，保证文案一致。
+// 经统一注入入口路由：会话忙时 DEFER 排队、回合结束交付；session 未加载等失败
+// 静默（后台回调无上报渠道），与迁移前行为一致。
 func (t *subagentTool) injectAsyncResult(sessionID, subSessionID, name, instruction, output string, err error) {
 	if t == nil || t.runtime == nil || t.opts.DisableSubagentSummary {
 		return
@@ -177,24 +179,23 @@ func (t *subagentTool) injectAsyncResult(sessionID, subSessionID, name, instruct
 	if err != nil && errors.Is(err, context.Canceled) {
 		return
 	}
-	if t.runtime.histories == nil {
-		return
-	}
-	history, ok := t.runtime.histories.Loaded(sessionID)
-	if !ok {
-		return
-	}
 	status := asyncTaskSuccess
 	errText := ""
 	if err != nil {
 		status = asyncTaskError
 		errText = err.Error()
 	}
-	history.Append(message.Message{
-		Role:     "user",
-		Content:  formatSubagentResultMessage(name, instruction, status, output, errText),
-		Metadata: subagentResultMetadata(subSessionID, name),
-	})
+	if injectErr := t.runtime.Inject(sessionID, Injection{
+		Kind:   InjectionKindSubagentResult,
+		Policy: BarrierDefer,
+		Message: message.Message{
+			Role:     "user",
+			Content:  formatSubagentResultMessage(name, instruction, status, output, errText),
+			Metadata: subagentResultMetadata(subSessionID, name),
+		},
+	}); injectErr != nil {
+		runtimeLogger.warnf("[api:subagent] async result inject failed session=%s task=%s: %v", sessionID, subSessionID, injectErr)
+	}
 }
 
 // subagentStatusTool 让主 agent 查询当前会话派发的后台子任务状态。
