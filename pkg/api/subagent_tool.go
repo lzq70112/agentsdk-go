@@ -247,6 +247,13 @@ func newSubSessionID(sessionID string) string {
 func (t *subagentTool) buildSubOptions(agentType AgentType, history []message.Message) Options {
 	subOpts := t.opts
 	subOpts.subagentDisabled = true
+	// 继承宿主当前的禁用清单：子 runtime 会重建 skill 注册表并重连 MCP，
+	// 不带清单的话 admin 禁用的条目会在子 agent 里复活。清单取自主 runtime
+	// 的实时值（t.opts 是注册时的快照，不含运行期禁用），快照克隆防共享。
+	if t.runtime != nil {
+		subOpts.DisabledSkills = t.runtime.DisabledSkills()
+		subOpts.DisabledMCP = t.runtime.DisabledMCP()
+	}
 	identity := strings.TrimSpace(agentType.SystemPrompt)
 	if identity == "" {
 		identity = defaultSubagentIdentityPrompt

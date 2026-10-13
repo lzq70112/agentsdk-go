@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/lzq70112/agentsdk-go/pkg/message"
@@ -96,5 +97,66 @@ func TestConvertMessagesPreservesReasoningContent(t *testing.T) {
 	// User message should have empty reasoning
 	if modelMsgs[0].ReasoningContent != "" {
 		t.Fatalf("user message should not have ReasoningContent")
+	}
+}
+
+func TestBuildSkillsRegistrySkipsDisabled(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	opts := Options{
+		ProjectRoot: dir,
+		Skills: []SkillRegistration{
+			{Definition: skills.Definition{Name: "ssh-secured"}, Handler: skills.HandlerFunc(func(context.Context, skills.ActivationContext) (skills.Result, error) {
+				return skills.Result{}, nil
+			})},
+			{Definition: skills.Definition{Name: "keep-me"}, Handler: skills.HandlerFunc(func(context.Context, skills.ActivationContext) (skills.Result, error) {
+				return skills.Result{}, nil
+			})},
+		},
+		DisabledSkills: []string{"SSH-Secured"},
+	}
+	skReg, errs := buildSkillsRegistry(opts)
+	if len(errs) != 0 {
+		t.Fatalf("unexpected loader errors: %v", errs)
+	}
+	if skReg == nil {
+		t.Fatal("expected non-nil skills registry")
+	}
+	for _, def := range skReg.List() {
+		if strings.EqualFold(def.Name, "ssh-secured") {
+			t.Fatal("disabled skill should not be registered")
+		}
+	}
+	if _, ok := skReg.Get("keep-me"); !ok {
+		t.Fatal("non-disabled skill should remain registered")
+	}
+}
+
+func TestBuildSubOptionsInheritsDisabledLists(t *testing.T) {
+	t.Parallel()
+
+	rt := &Runtime{opts: Options{
+		DisabledSkills: []string{"ssh-secured"},
+		DisabledMCP:    []string{"context7"},
+	}}
+	stale := &subagentTool{opts: Options{}}
+	stale.bindRuntime(rt)
+
+	subOpts := stale.buildSubOptions(AgentType{Name: "general"}, nil)
+	if len(subOpts.DisabledSkills) != 1 || subOpts.DisabledSkills[0] != "ssh-secured" {
+		t.Fatalf("expected child to inherit disabled skills, got %+v", subOpts.DisabledSkills)
+	}
+	if len(subOpts.DisabledMCP) != 1 || subOpts.DisabledMCP[0] != "context7" {
+		t.Fatalf("expected child to inherit disabled MCP servers, got %+v", subOpts.DisabledMCP)
+	}
+	if !subOpts.subagentDisabled {
+		t.Fatal("child options must keep subagent disabled")
+	}
+
+	// 清单返回克隆：修改子选项不得污染主 runtime 的清单。
+	subOpts.DisabledSkills[0] = "tampered"
+	if current := rt.DisabledSkills(); len(current) != 1 || current[0] != "ssh-secured" {
+		t.Fatalf("runtime disabled skills mutated via child options: %+v", current)
 	}
 }

@@ -22,7 +22,7 @@ func TestCollectMCPServersMergesSourcesAndDedups(t *testing.T) {
 			},
 		},
 	}
-	servers := collectMCPServers(settings, []string{"http://settings.example", "http://other.example"})
+	servers := collectMCPServers(settings, []string{"http://settings.example", "http://other.example"}, nil)
 	if len(servers) != 2 {
 		t.Fatalf("expected deduped two servers, got %d: %+v", len(servers), servers)
 	}
@@ -45,7 +45,7 @@ func TestCollectMCPServersPreservesSettingsOptions(t *testing.T) {
 			},
 		},
 	}
-	servers := collectMCPServers(settings, nil)
+	servers := collectMCPServers(settings, nil, nil)
 	if len(servers) != 1 {
 		t.Fatalf("expected one server, got %d: %+v", len(servers), servers)
 	}
@@ -91,7 +91,7 @@ func TestCollectMCPServersStdioSpec(t *testing.T) {
 			},
 		},
 	}
-	servers := collectMCPServers(settings, nil)
+	servers := collectMCPServers(settings, nil, nil)
 	if len(servers) != 1 {
 		t.Fatalf("expected one server, got %d", len(servers))
 	}
@@ -107,5 +107,38 @@ func TestAllowedByManagedPoliciesAllowList(t *testing.T) {
 	}
 	if allowedByManagedPolicies("svc", "http://denied", allow, nil) {
 		t.Fatalf("expected allowlist to deny non-matching target")
+	}
+}
+
+func TestCollectMCPServersSkipsDisabled(t *testing.T) {
+	t.Parallel()
+
+	settings := &config.Settings{
+		MCP: &config.MCPConfig{
+			Servers: map[string]config.MCPServerConfig{
+				"context7":    {Type: "http", URL: "http://context7.example"},
+				"k8s-tools":   {Type: "http", URL: "http://k8s.example"},
+				"plain-extra": {Type: "http", URL: "http://extra.example"},
+			},
+		},
+	}
+	// 大小写不敏感匹配配置名；显式 spec（无配置名）不受名单影响。
+	servers := collectMCPServers(settings, []string{"http://explicit.example"}, []string{"Context7 ", "plain-extra"})
+	if len(servers) != 2 {
+		t.Fatalf("expected disabled servers skipped, got %d: %+v", len(servers), servers)
+	}
+	for _, srv := range servers {
+		if srv.Name == "context7" {
+			t.Fatal("disabled server context7 should not be collected")
+		}
+	}
+	found := false
+	for _, srv := range servers {
+		if srv.Name == "k8s-tools" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("non-disabled server k8s-tools should remain")
 	}
 }

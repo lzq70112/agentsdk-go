@@ -211,13 +211,45 @@ func buildSkillsRegistry(opts Options) (*skills.Registry, []error) {
 
 	merged := mergeSkillRegistrations(fsRegs, opts.Skills, &errs)
 
+	disabled := disabledNameSet(opts.DisabledSkills)
 	reg := skills.NewRegistry()
 	for _, entry := range merged {
+		if _, skip := disabled[strings.ToLower(strings.TrimSpace(entry.Definition.Name))]; skip {
+			continue
+		}
 		if err := reg.Register(entry.Definition, entry.Handler); err != nil {
 			errs = append(errs, err)
 		}
 	}
 	return reg, errs
+}
+
+// disabledNameSet 归一化禁用名单为小写键集合，供构建期过滤使用；空名单返回 nil。
+func disabledNameSet(names []string) map[string]struct{} {
+	if len(names) == 0 {
+		return nil
+	}
+	set := make(map[string]struct{}, len(names))
+	for _, n := range names {
+		if key := strings.ToLower(strings.TrimSpace(n)); key != "" {
+			set[key] = struct{}{}
+		}
+	}
+	return set
+}
+
+// normalizeDisabledNames 清理禁用名单：去空白、去空项、按小写去重。
+func normalizeDisabledNames(names []string) []string {
+	set := disabledNameSet(names)
+	if len(set) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(set))
+	for key := range set {
+		out = append(out, key)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func mergeSkillRegistrations(fsRegs []skills.SkillRegistration, manual []SkillRegistration, errs *[]error) []skills.SkillRegistration {

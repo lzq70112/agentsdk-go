@@ -147,7 +147,7 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	mcpServers := collectMCPServers(settings, opts.MCPServers)
+	mcpServers := collectMCPServers(settings, opts.MCPServers, opts.DisabledMCP)
 	if err := registerMCPServers(ctx, registry, sbox, mcpServers); err != nil {
 		return nil, err
 	}
@@ -639,6 +639,70 @@ func (rt *Runtime) UnregisterSkill(name string) bool {
 		return false
 	}
 	return rt.opts.skReg.Unregister(name)
+}
+
+// DisabledSkills 返回当前禁用 skill 清单的快照。
+func (rt *Runtime) DisabledSkills() []string {
+	if rt == nil {
+		return nil
+	}
+	rt.mu.RLock()
+	defer rt.mu.RUnlock()
+	return append([]string(nil), rt.opts.DisabledSkills...)
+}
+
+// DisabledMCP 返回当前禁用 MCP server 清单的快照。
+func (rt *Runtime) DisabledMCP() []string {
+	if rt == nil {
+		return nil
+	}
+	rt.mu.RLock()
+	defer rt.mu.RUnlock()
+	return append([]string(nil), rt.opts.DisabledMCP...)
+}
+
+// SetDisabledSkills 运行时替换禁用 skill 清单：新增禁用项立即从主注册表移除，
+// 完整清单随 buildSubOptions 继承给后续派发的所有子 runtime，保证禁用对主/子
+// agent 一致生效。从清单移除的 skill 不会自动重新注册，宿主需显式 ReloadSkill。
+func (rt *Runtime) SetDisabledSkills(names []string) {
+	if rt == nil {
+		return
+	}
+	normalized := normalizeDisabledNames(names)
+	rt.mu.Lock()
+	previous := disabledNameSet(rt.opts.DisabledSkills)
+	rt.opts.DisabledSkills = normalized
+	rt.mu.Unlock()
+	// 只处理新增禁用项：已在清单中的重复移除无害但也无意义。
+	for _, raw := range names {
+		key := strings.ToLower(strings.TrimSpace(raw))
+		if key == "" {
+			continue
+		}
+		if _, existed := previous[key]; existed {
+			continue
+		}
+		rt.UnregisterSkill(raw)
+	}
+}
+
+// SetDisabledMCP 运行时替换禁用 MCP server 清单：新增禁用项立即从主 runtime
+// 断开，完整清单随 buildSubOptions 继承给后续派发的所有子 runtime。从清单移除
+// 的 server 不会自动重连，宿主需显式 AddMCPServer。
+func (rt *Runtime) SetDisabledMCP(names []string) {
+	if rt == nil {
+		return
+	}
+	normalized := normalizeDisabledNames(names)
+	rt.mu.Lock()
+	rt.opts.DisabledMCP = normalized
+	rt.mu.Unlock()
+	// 已断开的 server 不在 ListMCPServers 里，天然只处理新增禁用项。
+	for _, info := range rt.ListMCPServers() {
+		if isDisabledServer(info.Name, normalized) {
+			_ = rt.RemoveMCPServer(info.ServerID)
+		}
+	}
 }
 
 // ListSkills returns all registered skill definitions.

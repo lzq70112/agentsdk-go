@@ -180,6 +180,15 @@ type Options struct {
 	CustomTools            []tool.Tool
 	MCPServers             []string
 
+	// DisabledSkills 列出不注册的 skill 名（大小写不敏感）：New() 构建注册表时
+	// 跳过，并随 buildSubOptions 继承给子 runtime，保证宿主的禁用决定对主/子
+	// agent 一致生效。运行时可通过 Runtime.SetDisabledSkills 调整。
+	DisabledSkills []string
+	// DisabledMCP 列出不连接的 MCP server 配置名（settings.json mcp.servers 的键，
+	// 大小写不敏感）：collectMCPServers 时跳过，并随 buildSubOptions 继承给子
+	// runtime。运行时可通过 Runtime.SetDisabledMCP 调整。
+	DisabledMCP []string
+
 	TypedHooks             []hooks.ShellHook
 	HookMiddleware         []hooks.Middleware
 	HookTimeout            time.Duration
@@ -374,6 +383,12 @@ func (o Options) frozen() Options {
 	}
 	if len(o.MCPServers) > 0 {
 		o.MCPServers = append([]string(nil), o.MCPServers...)
+	}
+	if len(o.DisabledSkills) > 0 {
+		o.DisabledSkills = append([]string(nil), o.DisabledSkills...)
+	}
+	if len(o.DisabledMCP) > 0 {
+		o.DisabledMCP = append([]string(nil), o.DisabledMCP...)
 	}
 	if len(o.TypedHooks) > 0 {
 		hooks := make([]hooks.ShellHook, len(o.TypedHooks))
