@@ -182,10 +182,18 @@ func (b *BashTool) Execute(ctx context.Context, params map[string]interface{}) (
 		defer cancel()
 	}
 
+	// 命令物化为临时脚本执行：多行（heredoc/续行）与超长脚本不再受命令行
+	// 转义与 Windows CreateProcess 32K 上限限制；validator 已作用于原始命令。
+	scriptPath, cleanupScript, err := bashMaterializeScript(command)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanupScript()
+
 	// bash 路径经三段式解析（候选 → 探活 → 缓存），Windows 上绝不 PATH
 	// 搜 bash（WSL stub 陷阱）。解析结果进程级缓存，此处调用零成本。
 	bashPath, _ := ResolveBashExecutable()
-	cmd := exec.CommandContext(execCtx, bashPath, "-c", command)
+	cmd := exec.CommandContext(execCtx, bashPath, scriptPath)
 	cmd.Env = os.Environ()
 	cmd.Dir = workdir
 
@@ -791,8 +799,10 @@ func (v *bashCommandValidator) Validate(input string) error {
 		return fmt.Errorf("bash: command too long (%d bytes)", len(cmd))
 	}
 
-	if strings.ContainsAny(cmd, "\n\r") {
-		return errors.New("bash: multiline command is not allowed")
+	// 多行仅在元字符开放（CLI/运行时模式）时放行：命令会物化为临时脚本
+	// 执行，安全模式维持单行契约、零新增攻击面。
+	if strings.ContainsAny(cmd, "\n\r") && !allowMeta {
+		return errors.New("bash: multiline command is not allowed (enable shell metacharacters to run multiline commands)")
 	}
 
 	if containsControlNonWhitespace(cmd) {

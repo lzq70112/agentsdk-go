@@ -60,8 +60,15 @@ func (b *BashTool) StreamExecute(ctx context.Context, params map[string]interfac
 		defer cancel()
 	}
 
+	// 命令物化为临时脚本执行，与 Execute 共用同一通道（多行/超长脚本支持）。
+	scriptPath, cleanupScript, err := bashMaterializeScript(command)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanupScript()
+
 	bashPath, _ := ResolveBashExecutable()
-	cmd := exec.CommandContext(execCtx, bashPath, "-c", command)
+	cmd := exec.CommandContext(execCtx, bashPath, scriptPath)
 	cmd.Env = os.Environ()
 	cmd.Dir = workdir
 
