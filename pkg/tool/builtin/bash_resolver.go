@@ -27,12 +27,17 @@ const (
 
 	// bashEnvOverride 允许部署方显式指定 bash 路径，优先级最高。
 	bashEnvOverride = "AGENTSDK_BASH_EXECUTABLE"
+
+	// bashProbeMarkerFirst / bashProbeMarkerSecond 是探活输出标记：
+	// 第一行含非 ASCII，第二行验证多行完整抵达。
+	bashProbeMarkerFirst  = "agentsdk-bash-probe-探活-πλü-1"
+	bashProbeMarkerSecond = "agentsdk-probe-line-2"
 )
 
 // bashProbeScript 是探活 payload：刻意包含多行与非 ASCII 字符，让传输层
 // 的换行/编码 mangle 在探活期暴露，而不是在第一条真实命令时才暴露。
 func bashProbeScript() string {
-	return "echo 'agentsdk-bash-probe-探活-πλü-1'\necho 'agentsdk-probe-line-2'\nexit 0\n"
+	return "echo '" + bashProbeMarkerFirst + "'\necho '" + bashProbeMarkerSecond + "'\nexit 0\n"
 }
 
 // BashProviderDiagnostic 是 bash 解析结果的只读描述，供宿主程序（如
@@ -211,8 +216,8 @@ func runBashProbe(path string) (string, error) {
 	if err != nil {
 		return string(out), err
 	}
-	if !strings.Contains(string(out), "agentsdk-bash-probe-探活-πλü-1") ||
-		!strings.Contains(string(out), "agentsdk-probe-line-2") {
+	if !strings.Contains(string(out), bashProbeMarkerFirst) ||
+		!strings.Contains(string(out), bashProbeMarkerSecond) {
 		return string(out), fmt.Errorf("probe output missing expected markers")
 	}
 	return string(out), nil
