@@ -239,21 +239,29 @@ func newSubSessionID(sessionID string) string {
 	return fmt.Sprintf("%s-sub-%s", sessionID, uuid.New().String())
 }
 
-// buildSubOptions 基于主 Options 构造子 Runtime 选项：子 agent 采用隔离上下文，
+// parentContext 装配父 runtime 传给子 agent 派发链的全部继承状态（唯一装配点，
+// 字段约定见 subagentParentContext）。实时禁用清单取自主 runtime 的当前值，
+// 快照克隆防共享；runtime 为 nil 时保留 t.opts 快照原值。
+func (t *subagentTool) parentContext() subagentParentContext {
+	pc := subagentParentContext{BaseOptions: t.opts}
+	if t.runtime != nil {
+		pc.BaseOptions.DisabledSkills = t.runtime.DisabledSkills()
+		pc.BaseOptions.DisabledMCP = t.runtime.DisabledMCP()
+	}
+	return pc
+}
+
+// buildSubOptions 基于父继承状态构造子 Runtime 选项：子 agent 采用隔离上下文，
 // 不 fork 主会话历史；身份 system prompt 由 agent 类型决定（为空时用默认），替换
 // 子 runtime 的 identity 段，但保留 rules/memory 等项目上下文。子 runtime 内的
 // subagent tool 标记为禁用 no-op，硬阻断孙 agent 派生（最多 1 层）。
 // history 是子会话自身的历史：首次派发为 nil（全新上下文），追问续跑时传回先前快照。
 func (t *subagentTool) buildSubOptions(agentType AgentType, history []message.Message) Options {
-	subOpts := t.opts
-	subOpts.subagentDisabled = true
 	// 继承宿主当前的禁用清单：子 runtime 会重建 skill 注册表并重连 MCP，
-	// 不带清单的话 admin 禁用的条目会在子 agent 里复活。清单取自主 runtime
-	// 的实时值（t.opts 是注册时的快照，不含运行期禁用），快照克隆防共享。
-	if t.runtime != nil {
-		subOpts.DisabledSkills = t.runtime.DisabledSkills()
-		subOpts.DisabledMCP = t.runtime.DisabledMCP()
-	}
+	// 不带清单的话 admin 禁用的条目会在子 agent 里复活。清单由装配点取自
+	// 主 runtime 实时值（t.opts 是注册时的快照，不含运行期禁用），克隆防共享。
+	subOpts := t.parentContext().BaseOptions
+	subOpts.subagentDisabled = true
 	identity := strings.TrimSpace(agentType.SystemPrompt)
 	if identity == "" {
 		identity = defaultSubagentIdentityPrompt
