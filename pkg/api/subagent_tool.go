@@ -345,15 +345,41 @@ func (t *subagentTool) notifySubagentCompletion(mainSessionID, subSessionID, nam
 	})
 }
 
-// publishSubagentEvent 向 hooks 总线发布 subagent 生命周期事件，供平台侧审计与监控。
-// 发布失败只告警：观测链路的问题不应影响派发本身的结果与回传。
-func (t *subagentTool) publishSubagentEvent(evt hooks.Event) {
-	if t == nil || t.runtime == nil || t.runtime.hooks == nil {
+// subagentEventForwardable 是子 agent → 父会话 hooks 总线的转发白名单。
+// 子 agent 事件流对父会话默认不可见；新增事件类型必须在此显式加分支，
+// 并评估该事件对父会话 UI 与会话记录的语义影响（防事件洪水污染父会话）。
+// 未登记类型一律拒绝转发。
+func subagentEventForwardable(evtType hooks.EventType) bool {
+	switch evtType {
+	case hooks.SubagentStart, hooks.SubagentComplete:
+		return true
+	default:
+		return false
+	}
+}
+
+// forwardSubagentEvent 是子 agent 生命周期事件发往 hooks 总线的统一转发
+// 出口（白名单收口），供平台侧审计与监控。发布失败只告警：观测链路的
+// 问题不应影响派发本身的结果与回传。
+func forwardSubagentEvent(hooksExec *hooks.Executor, evt hooks.Event) {
+	if hooksExec == nil {
 		return
 	}
-	if err := t.runtime.hooks.Publish(evt); err != nil {
+	if !subagentEventForwardable(evt.Type) {
+		runtimeLogger.warnf("[subagent] 事件类型 %s 未登记转发白名单，拒绝转发", evt.Type)
+		return
+	}
+	if err := hooksExec.Publish(evt); err != nil {
 		runtimeLogger.warnf("[subagent] 生命周期事件发布失败 type=%s: %v", evt.Type, err)
 	}
+}
+
+// forwardEvent 把本 tool 关联 runtime 的 hooks 总线交给统一转发出口。
+func (t *subagentTool) forwardEvent(evt hooks.Event) {
+	if t == nil || t.runtime == nil {
+		return
+	}
+	forwardSubagentEvent(t.runtime.hooks, evt)
 }
 
 // Execute 被 SDK tool executor 调用：为子 agent 准备隔离上下文（全新历史 + 身份
@@ -408,7 +434,7 @@ func (t *subagentTool) Execute(ctx context.Context, params map[string]any) (*too
 	// 追问时它作为新的一轮用户消息追加在子会话既有历史之后。
 	prompt := buildDelegationMessage(name, instruction)
 
-	t.publishSubagentEvent(hooks.Event{
+	t.forwardEvent(hooks.Event{
 		Type:      hooks.SubagentStart,
 		SessionID: sessionID,
 		Payload: hooks.SubagentStartPayload{
@@ -457,7 +483,7 @@ func (t *subagentTool) reportCompletion(sessionID, subSessionID, name string, ag
 		payload.Output = truncateString(output, subagentOutputLimit)
 		payload.OutputLength = len(output)
 	}
-	t.publishSubagentEvent(hooks.Event{
+	t.forwardEvent(hooks.Event{
 		Type:      hooks.SubagentComplete,
 		SessionID: sessionID,
 		Payload:   payload,

@@ -29,15 +29,11 @@ func (rt *Runtime) handleSubagentCompletion(status subagents.Status) {
 		Output: truncateString(status.Output, subagentOutputLimit),
 		Error:  strings.TrimSpace(status.Error),
 	}
-	if rt.hooks != nil {
-		if err := rt.hooks.Publish(hooks.Event{
-			Type:      hooks.SubagentComplete,
-			SessionID: strings.TrimSpace(status.SessionID),
-			Payload:   payload,
-		}); err != nil {
-			runtimeLogger.warnf("hooks: subagent completion publish failed: %v", err)
-		}
-	}
+	forwardSubagentEvent(rt.hooks, hooks.Event{
+		Type:      hooks.SubagentComplete,
+		SessionID: strings.TrimSpace(status.SessionID),
+		Payload:   payload,
+	})
 	if rt.opts.DisableSubagentSummary {
 		return
 	}

@@ -116,6 +116,12 @@ With `background: true`, `Execute` returns immediately:
 
 Completion and failure are both delivered on the hooks bus as `SubagentComplete` events with payload fields `TaskID`, `Name`, `Status` (`success`/`error`), `Output` (truncated to 2000 chars), `Error`, `AgentType`, `Duration`, and `OutputLength` (the untruncated length). This fits IM front-ends that push a card when the event arrives. Async tasks run under a context bound to the main runtime: `Runtime.Close()` cancels them and waits, so no goroutine outlives the runtime.
 
+## Event Forwarding Whitelist
+
+Sub-agent events are invisible to the parent session by default. Every hop from a sub-agent to the parent session's hooks bus goes through a single forwarding exit (`forwardSubagentEvent`) guarded by an explicit switch whitelist (`subagentEventForwardable`): currently `SubagentStart` and `SubagentComplete`. Unlisted event types are rejected with a warning.
+
+Convention: a new hooks event type is NOT forwarded from the sub-agent chain automatically. It must be added to the whitelist switch explicitly, together with an assessment of what the event means for the parent session's UI and transcript — this prevents event floods from polluting the parent conversation.
+
 ## Session Resumption
 
 Each successful dispatch returns a sub-session id (`Data.sub_session_id`). Passing that id back via the `sub_session_id` parameter continues the sub-agent with its full working memory instead of starting a fresh isolated context:
