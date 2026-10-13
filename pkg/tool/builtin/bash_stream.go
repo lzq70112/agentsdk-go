@@ -60,7 +60,8 @@ func (b *BashTool) StreamExecute(ctx context.Context, params map[string]interfac
 		defer cancel()
 	}
 
-	cmd := exec.CommandContext(execCtx, "bash", "-c", command)
+	bashPath, _ := ResolveBashExecutable()
+	cmd := exec.CommandContext(execCtx, bashPath, "-c", command)
 	cmd.Env = os.Environ()
 	cmd.Dir = workdir
 

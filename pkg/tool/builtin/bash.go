@@ -182,7 +182,10 @@ func (b *BashTool) Execute(ctx context.Context, params map[string]interface{}) (
 		defer cancel()
 	}
 
-	cmd := exec.CommandContext(execCtx, "bash", "-c", command)
+	// bash 路径经三段式解析（候选 → 探活 → 缓存），Windows 上绝不 PATH
+	// 搜 bash（WSL stub 陷阱）。解析结果进程级缓存，此处调用零成本。
+	bashPath, _ := ResolveBashExecutable()
+	cmd := exec.CommandContext(execCtx, bashPath, "-c", command)
 	cmd.Env = os.Environ()
 	cmd.Dir = workdir
 
