@@ -71,6 +71,7 @@ type Runtime struct {
 	deferred  *deferredToolState
 	subagent  *subagentTool
 	reminders *reminderEngine
+	crons     *cronEngine
 
 	mu sync.RWMutex
 
@@ -201,6 +202,8 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		subagent.bindRuntime(rt)
 	}
 	rt.bindSubagentCallbacks()
+	// cron 引擎经统一注入入口写会话，任务创建时才惰性启动扫描循环。
+	rt.crons = newCronEngine(rt.Inject, opts.ScheduledFireHandler)
 	return rt, nil
 }
 
@@ -391,6 +394,11 @@ func (rt *Runtime) Close() error {
 		rt.runMu.Lock()
 		rt.closed = true
 		rt.runMu.Unlock()
+
+		// 先停 cron 触发源：避免关闭期间新的到期注入继续落盘。
+		if rt.crons != nil {
+			rt.crons.stop()
+		}
 
 		rt.runWG.Wait()
 

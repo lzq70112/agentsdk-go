@@ -199,6 +199,12 @@ type Options struct {
 	// 携带该子会话的隔离历史快照，供宿主在 SDK 之外落盘或观测。为 nil 时不回调。
 	SubagentCompletionHandler func(SubagentCompletion)
 
+	// ScheduledFireHandler 在 cron 任务到期并成功注入会话后被调用，参数是推进后
+	// 的任务快照（recurring 含新 NextRun；one-shot 含终态 LastRun）。注入只落
+	// history 不驱动模型运行，宿主可借此发起唤醒回合让到期任务被真正执行。
+	// 为 nil 时不回调。
+	ScheduledFireHandler func(CronTask)
+
 	Skills           []SkillRegistration
 	Subagents        []SubagentRegistration
 	AgentTypes       []AgentType
