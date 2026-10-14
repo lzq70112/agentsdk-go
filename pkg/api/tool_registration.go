@@ -33,7 +33,8 @@ func registerTools(registry *tool.Registry, opts Options, settings *config.Setti
 			if canonicalToolName(name) == subagentToolName {
 				subagent = newSubagentTool(opts)
 				// 查询/停止工具与 subagent 同源：共享任务注册表，且仅在启用
-				// subagent 时出现，子 runtime 中随 subagentDisabled 一起退化为 no-op。
+				// subagent 时出现。子 runtime 中注册保留（误调用由 Execute 返回
+				// 明确拒绝），但经 HiddenFromDispatch 从下发列表隐藏。
 				tools = append(tools, subagent,
 					&subagentStatusTool{owner: subagent, disabled: opts.subagentDisabled},
 					&subagentStopTool{owner: subagent, disabled: opts.subagentDisabled},

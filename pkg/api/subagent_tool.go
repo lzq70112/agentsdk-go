@@ -108,6 +108,11 @@ func (t *subagentTool) bindRuntime(rt *Runtime) {
 // Name 返回 tool 的唯一标识。
 func (t *subagentTool) Name() string { return subagentToolName }
 
+// HiddenFromDispatch 在子 runtime（disabled）中把本工具从下发列表隐藏：
+// 递归派发已被 Execute 硬阻断，下发只会误导调用方高估自身能力；注册保留，
+// 万一被误调用仍返回明确的拒绝文案而非 "tool not found"。
+func (t *subagentTool) HiddenFromDispatch() bool { return t != nil && t.disabled }
+
 // Description 返回给 LLM 看的 tool 说明。注册了 agent 类型时，末尾追加可用类型
 // 清单，让主 agent 能按任务性质选择；未注册时返回基础文案，与历史行为一致。
 func (t *subagentTool) Description() string {
@@ -126,6 +131,7 @@ func (t *subagentTool) Description() string {
 - 还无法清楚描述任务目标时，先想清楚再派发
 
 派发要求：
+- 参数 name（必填，子任务标识）与 instruction（必填）缺一不可，缺 name 会被直接拒绝
 - instruction 必须自包含：目标、范围、期望的产出要写清楚，子 agent 会得到与 instruction 完整度相称的结果
 
 结果预期：
@@ -167,7 +173,7 @@ func (t *subagentTool) Schema() *tool.JSONSchema {
 		Properties: map[string]any{
 			"name": map[string]any{
 				"type":        "string",
-				"description": "子 agent 的名称，用于标识本次子任务",
+				"description": "子 agent 的名称（必填），用于标识本次子任务",
 			},
 			"instruction": map[string]any{
 				"type":        "string",

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/lzq70112/agentsdk-go/pkg/sandbox"
@@ -47,6 +48,15 @@ func (f *fileSandbox) resolvePath(raw interface{}) (string, error) {
 	trimmed := strings.TrimSpace(pathStr)
 	if trimmed == "" {
 		return "", errors.New("path cannot be empty")
+	}
+	// Windows 下 / 开头的 POSIX 风格绝对路径无法定位（filepath.IsAbs 返回
+	// false），会被误当相对路径拼进沙箱根（如 /tmp/x → <root>\tmp\x），静默
+	// 在项目内创建目录污染工作区。显式拒绝并引导改用相对路径；// 开头的
+	// UNC 路径与 Linux/macOS 的原生绝对路径不受影响。
+	if runtime.GOOS == "windows" && strings.HasPrefix(trimmed, "/") && !strings.HasPrefix(trimmed, "//") {
+		return "", fmt.Errorf(
+			"POSIX-style absolute path %q cannot be resolved on Windows; use a path relative to the sandbox root (e.g. %q) or a Windows absolute path (C:\\...)",
+			trimmed, strings.TrimPrefix(trimmed, "/"))
 	}
 	candidate := trimmed
 	if !filepath.IsAbs(candidate) {

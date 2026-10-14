@@ -207,6 +207,9 @@ type subagentStatusTool struct {
 
 func (t *subagentStatusTool) Name() string { return subagentStatusToolName }
 
+// HiddenFromDispatch 随 owner 同步：子 runtime 中注册保留、下发隐藏（同 subagentTool）。
+func (t *subagentStatusTool) HiddenFromDispatch() bool { return t != nil && t.disabled }
+
 func (t *subagentStatusTool) Description() string {
 	return `查询当前会话中后台派发的子 agent 任务状态。
 不传 sub_session_id 时列出当前会话所有在途（running）子任务；传入任务标识时返回该任务的当前状态（含已结束任务的最终结果）。`
@@ -268,6 +271,9 @@ type subagentStopTool struct {
 
 func (t *subagentStopTool) Name() string { return subagentStopToolName }
 
+// HiddenFromDispatch 随 owner 同步：子 runtime 中注册保留、下发隐藏（同 subagentTool）。
+func (t *subagentStopTool) HiddenFromDispatch() bool { return t != nil && t.disabled }
+
 func (t *subagentStopTool) Description() string {
 	return `停止当前会话中一个在途的后台子 agent 任务。
 停止是协作式的：子 agent 会在下一个执行轮次检查到取消信号后退出；若它正卡在不响应取消的工具调用中，退出会延迟。`
@@ -323,6 +329,9 @@ type subagentOutputTool struct {
 }
 
 func (t *subagentOutputTool) Name() string { return subagentOutputToolName }
+
+// HiddenFromDispatch 随 owner 同步：子 runtime 中注册保留、下发隐藏（同 subagentTool）。
+func (t *subagentOutputTool) HiddenFromDispatch() bool { return t != nil && t.disabled }
 
 func (t *subagentOutputTool) Description() string {
 	return `读取一个子 agent 任务的完整输出全文。

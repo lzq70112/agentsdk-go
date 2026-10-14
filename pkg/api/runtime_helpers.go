@@ -46,6 +46,11 @@ func availableToolsFromList(tools []tool.Tool, whitelist map[string]struct{}, de
 				continue
 			}
 		}
+		// DispatchHider：注册保留、下发隐藏的工具（如子 runtime 内的 subagent 系）
+		// 不进下发列表；误调用仍会命中注册表并由 Execute 返回明确拒绝。
+		if tool.HiddenFromDispatch(impl) {
+			continue
+		}
 		if !deferred.shouldExpose(name, sessionID) {
 			continue
 		}

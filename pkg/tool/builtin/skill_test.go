@@ -30,10 +30,23 @@ func TestSkillToolExecutesSkill(t *testing.T) {
 }
 
 func TestSkillToolUnknownSkill(t *testing.T) {
-	tool := NewSkillTool(skills.NewRegistry(), nil)
-	_, err := tool.Execute(context.Background(), map[string]interface{}{"command": "missing"})
+	reg := skills.NewRegistry()
+	for _, name := range []string{"tdd", "diagnosing-bugs"} {
+		if err := reg.Register(skills.Definition{Name: name}, skills.HandlerFunc(func(ctx context.Context, ac skills.ActivationContext) (skills.Result, error) {
+			return skills.Result{Skill: name}, nil
+		})); err != nil {
+			t.Fatalf("register %s: %v", name, err)
+		}
+	}
+	tool := NewSkillTool(reg, nil)
+	// agent-tool-issues P3：unknown skill 报错必须带可用名单，调用方才能
+	// 直接自纠命令名（如 diagnose → diagnosing-bugs），而不是翻目录猜。
+	_, err := tool.Execute(context.Background(), map[string]interface{}{"command": "diagnose"})
 	if err == nil || !errors.Is(err, skills.ErrUnknownSkill) {
 		t.Fatalf("expected ErrUnknownSkill, got %v", err)
+	}
+	if !strings.Contains(err.Error(), `"diagnose"`) || !strings.Contains(err.Error(), "tdd") || !strings.Contains(err.Error(), "diagnosing-bugs") {
+		t.Fatalf("unknown skill error should carry requested name and available list, got: %v", err)
 	}
 }
 

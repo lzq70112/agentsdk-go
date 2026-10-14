@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/lzq70112/agentsdk-go/pkg/runtime/skills"
@@ -120,6 +121,11 @@ func (s *SkillTool) Execute(ctx context.Context, params map[string]interface{}) 
 	act := s.provider(ctx)
 	result, err := s.registry.Execute(ctx, name, act)
 	if err != nil {
+		// unknown skill 时附带可用 skill 名单：命令名必须与注册名完全一致，
+		// 只报 "unknown skill" 会让调用方无从自纠（只能翻目录猜）。
+		if errors.Is(err, skills.ErrUnknownSkill) {
+			return nil, fmt.Errorf("%w %q; available skills: %s", err, name, availableSkillNames(s.registry.List()))
+		}
 		return nil, err
 	}
 	output := formatSkillOutput(result)
@@ -152,6 +158,22 @@ func parseSkillName(params map[string]interface{}) (string, error) {
 		return "", errors.New("command cannot be empty")
 	}
 	return name, nil
+}
+
+// availableSkillNames 提取 registry 中全部 skill 名（去空白、按字典序），
+// 供 unknown skill 报错附带动名单；registry 为空时返回占位说明。
+func availableSkillNames(defs []skills.Definition) string {
+	if len(defs) == 0 {
+		return "(none registered)"
+	}
+	names := make([]string, 0, len(defs))
+	for _, def := range defs {
+		if name := strings.TrimSpace(def.Name); name != "" {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return strings.Join(names, ", ")
 }
 
 func formatSkillOutput(result skills.Result) string {

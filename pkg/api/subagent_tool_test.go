@@ -268,13 +268,13 @@ func TestSubagentTool_RunsChildInIsolatedContext(t *testing.T) {
 	}
 }
 
-// TestSubagentTool_ChildRuntimeSubagentToolIsDisabledNoOp 验证子 runtime 完整暴露
-// subagent tool（tools 前缀与主请求一致、cache 可命中），但调用它得到明确拒绝、
-// 不派生出孙 agent。这条测试守住递归硬约束：若有人为了防递归重新把 subagent tool
-// 从子工具集删掉，"子请求暴露 subagent tool"断言先挂；若 no-op 退化消失，拒绝
-// 文案缺失与孙 runtime 计数断言挂。mock 脚本：主→派发子，子→试图派发孙（应被
-// 拒），子→被拒后自行收尾。
-func TestSubagentTool_ChildRuntimeSubagentToolIsDisabledNoOp(t *testing.T) {
+// TestSubagentTool_ChildRuntimeSubagentHiddenButRefused 验证子 runtime 不再下发
+// subagent 系工具（递归派发被硬阻断，下发只会误导调用方高估自身能力，
+// agent-tool-issues P5），但注册保留：万一被误调用仍得到明确拒绝文案、
+// 不派生出孙 agent。这条测试守住递归硬约束：若有人重新把 subagent 系下发
+// 给子请求，"不下发"断言先挂；若注册兜底退化消失，拒绝文案缺失与孙 runtime
+// 计数断言挂。mock 脚本：主→派发子，子→试图派发孙（应被拒），子→被拒后自行收尾。
+func TestSubagentTool_ChildRuntimeSubagentHiddenButRefused(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	mm := &recordingMockModel{responses: []model.Response{
@@ -327,8 +327,8 @@ func TestSubagentTool_ChildRuntimeSubagentToolIsDisabledNoOp(t *testing.T) {
 		t.Fatalf("expected subagent success, got: %s", res.Output)
 	}
 
-	// 子 runtime 的第一轮请求必须暴露 subagent tool：把它删掉防递归会破坏 tools
-	// 前缀，那正是被废弃的做法。
+	// 子 runtime 的第一轮请求不得下发 subagent 系工具：递归派发已被 Execute
+	// 硬阻断，下发只会误导调用方高估自身能力（agent-tool-issues P5）。
 	var childReq *model.Request
 	for i := range mm.calls {
 		if subtaskMessage(&mm.calls[i], "child") != "" {
@@ -339,8 +339,11 @@ func TestSubagentTool_ChildRuntimeSubagentToolIsDisabledNoOp(t *testing.T) {
 	if childReq == nil {
 		t.Fatal("subagent runtime was not invoked")
 	}
-	if !hasTool(toolNames(childReq.Tools), subagentToolName) {
-		t.Fatalf("child runtime should expose subagent tool, got %v", toolNames(childReq.Tools))
+	childNames := toolNames(childReq.Tools)
+	for _, banned := range []string{subagentToolName, subagentStatusToolName, subagentStopToolName, subagentOutputToolName} {
+		if hasTool(childNames, banned) {
+			t.Fatalf("child runtime should not expose %s to dispatch, got %v", banned, childNames)
+		}
 	}
 
 	// 子 agent 试图派生孙 agent 被拒，且拒绝结果回传给了模型。
@@ -598,18 +601,28 @@ func TestSubagentTool_ChildRequestUsesIsolatedContext(t *testing.T) {
 		t.Fatal("subagent runtime was not invoked")
 	}
 
-	// 工具面一致：子 agent 沿用主 runtime 的工具集，不删 subagent 工具（递归由
-	// 子 runtime 内的 no-op 阻断）。
-	mainTools, err := json.Marshal(mm.calls[0].Tools)
-	if err != nil {
-		t.Fatalf("marshal main tools: %v", err)
-	}
+	// 工具面：子 agent 沿用主 runtime 的常规工具集，但 subagent 系不下发
+	// （递归由 Execute 兜底阻断，agent-tool-issues P5）——子面 = 主面 - subagent 系。
 	childTools, err := json.Marshal(childReq.Tools)
 	if err != nil {
 		t.Fatalf("marshal child tools: %v", err)
 	}
-	if !bytes.Equal(mainTools, childTools) {
-		t.Fatalf("child request tools differ from main:\nmain=%s\nchild=%s", mainTools, childTools)
+	var mainWithoutSubagent []model.ToolDefinition
+	for _, def := range mm.calls[0].Tools {
+		if strings.EqualFold(def.Name, subagentToolName) ||
+			strings.EqualFold(def.Name, subagentStatusToolName) ||
+			strings.EqualFold(def.Name, subagentStopToolName) ||
+			strings.EqualFold(def.Name, subagentOutputToolName) {
+			continue
+		}
+		mainWithoutSubagent = append(mainWithoutSubagent, def)
+	}
+	wantChild, err := json.Marshal(mainWithoutSubagent)
+	if err != nil {
+		t.Fatalf("marshal expected child tools: %v", err)
+	}
+	if !bytes.Equal(wantChild, childTools) {
+		t.Fatalf("child request tools should equal main tools minus subagent set:\nwant=%s\ngot=%s", wantChild, childTools)
 	}
 
 	// 上下文隔离：system 为子 agent 身份，messages 不含主会话历史。
@@ -753,10 +766,10 @@ func TestSubagentTool_ChildRuntimeInheritsCustomTools(t *testing.T) {
 	if !hasTool(childTools, "read") {
 		t.Fatalf("child runtime missing read tool, got %v", childTools)
 	}
-	// 新契约：子 runtime 同样暴露 subagent tool（Name/Description/Schema 与主
-	// 一致，保 prefix cache），递归由子 runtime 内的 no-op 阻断而非删工具。
-	if !hasTool(childTools, "subagent") {
-		t.Fatalf("child runtime should expose subagent tool, got %v", childTools)
+	// 新契约：子 runtime 不下发 subagent 系工具（递归由注册兜底的 Execute
+	// 阻断，agent-tool-issues P5），常规工具与自定义工具照常继承。
+	if hasTool(childTools, "subagent") {
+		t.Fatalf("child runtime should not expose subagent tool, got %v", childTools)
 	}
 }
 
@@ -1485,9 +1498,10 @@ func TestSubagentTool_ChildRuntimeInheritsMCPServers(t *testing.T) {
 	if !hasTool(childTools, "echo") {
 		t.Fatalf("child runtime missing mcp echo tool, got %v", childTools)
 	}
-	// 新契约：子 runtime 同样暴露 subagent tool，与主 runtime 工具面一致。
-	if !hasTool(childTools, "subagent") {
-		t.Fatalf("child runtime should expose subagent tool, got %v", childTools)
+	// 新契约：子 runtime 不下发 subagent 系工具（agent-tool-issues P5），
+	// MCP 工具面照常继承。
+	if hasTool(childTools, "subagent") {
+		t.Fatalf("child runtime should not expose subagent tool, got %v", childTools)
 	}
 }
 
@@ -2504,12 +2518,16 @@ func TestSubagentTool_ResumeKeepsTypeConfig(t *testing.T) {
 	if resumeTools != firstTools || sameTypeTools != firstTools {
 		t.Fatalf("resume tool face drifted: first=%q resume=%q sameType=%q", firstTools, resumeTools, sameTypeTools)
 	}
-	// 白名单不再收窄：追问请求带全量工具（含 subagent 与 customEcho），与首次
-	// 派发逐项一致；类型配置的沿用体现在追加提示词上（见下）。
-	for _, want := range []string{"read", "write", "customEcho", subagentToolName} {
+	// 白名单不再收窄：追问请求带全量常规工具（含 customEcho），与首次派发逐项
+	// 一致；subagent 系在子会话内一律不下发（agent-tool-issues P5）；类型配置
+	// 的沿用体现在追加提示词上（见下）。
+	for _, want := range []string{"read", "write", "customEcho"} {
 		if !hasTool(toolNames(resumeReq.Tools), want) {
 			t.Fatalf("resume request missing %q: %v", want, toolNames(resumeReq.Tools))
 		}
+	}
+	if hasTool(toolNames(resumeReq.Tools), subagentToolName) {
+		t.Fatalf("resume request should not expose subagent: %v", toolNames(resumeReq.Tools))
 	}
 
 	// 类型的身份 system prompt 随缓存类型一起沿用。

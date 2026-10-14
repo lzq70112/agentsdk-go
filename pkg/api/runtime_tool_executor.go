@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/lzq70112/agentsdk-go/pkg/hooks"
@@ -235,7 +236,16 @@ func (t *runtimeToolExecutor) appendCallResult(call model.ToolCall, result *tool
 
 func toolCallResultContent(result *tool.CallResult, err error) string {
 	if err != nil {
-		return fmt.Sprintf(`{"error":%q}`, err.Error())
+		content := fmt.Sprintf(`{"error":%q}`, err.Error())
+		// 工具失败时保留已产生的部分输出（如 bash 链式命令中前序命令的
+		// stdout/stderr——bash 的 result.Output 已合并两路流）：只回错误码
+		// 会让调用方无从定位失败原因，只能盲目重试或拆步重跑。
+		if result != nil && result.Result != nil {
+			if partial := strings.TrimSpace(result.Result.Output); partial != "" {
+				content += "\n" + partial
+			}
+		}
+		return content
 	}
 	if result != nil && result.Result != nil {
 		return result.Result.Output
