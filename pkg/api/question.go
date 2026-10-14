@@ -84,10 +84,9 @@ func (r *questionRegistry) answer(id, answer string) error {
 	if !ok {
 		return fmt.Errorf("api: 问题 %s 不存在或已过期", id)
 	}
-	select {
-	case p.answered <- answer:
-	default:
-	}
+	// answered 缓冲 1 且本方法是唯一投递点（投递前已摘除登记，同一问题
+	// 不会二次投递），直接投递不会阻塞。
+	p.answered <- answer
 	return nil
 }
 
