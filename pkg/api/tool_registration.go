@@ -36,7 +36,8 @@ func registerTools(registry *tool.Registry, opts Options, settings *config.Setti
 				// subagent 时出现，子 runtime 中随 subagentDisabled 一起退化为 no-op。
 				tools = append(tools, subagent,
 					&subagentStatusTool{owner: subagent, disabled: opts.subagentDisabled},
-					&subagentStopTool{owner: subagent, disabled: opts.subagentDisabled})
+					&subagentStopTool{owner: subagent, disabled: opts.subagentDisabled},
+					&subagentOutputTool{owner: subagent, disabled: opts.subagentDisabled})
 				continue
 			}
 			ctor := factories[name]

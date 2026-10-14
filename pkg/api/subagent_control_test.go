@@ -326,3 +326,122 @@ func TestSubagentAsyncDispatch_RejectsBeyondConcurrencyLimit(t *testing.T) {
 		t.Fatalf("expected re-dispatch success after slot release: res=%+v err=%v", third, err)
 	}
 }
+
+// TestSubagentOutputTool_ReturnsFullOutputFromTask 守住"截断不丢信息"承诺：
+// 完成通知截断后，主 agent 必须能凭 sub_session_id 从任务注册表取回完整输出，
+// 而不是只能重复派发子 agent 补查。
+func TestSubagentOutputTool_ReturnsFullOutputFromTask(t *testing.T) {
+	st := newControlTestTool(t)
+	full := strings.Repeat("调研结论。", 2000)
+	st.tasks["s1-sub-1"] = &asyncTask{
+		id: "s1-sub-1", sessionID: "s1", name: "research",
+		status: asyncTaskSuccess, startedAt: time.Now(), output: full,
+	}
+
+	outTool := &subagentOutputTool{owner: st}
+	res, err := outTool.Execute(WithToolSessionID(context.Background(), "s1"), map[string]any{"sub_session_id": "s1-sub-1"})
+	if err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+	if !res.Success {
+		t.Fatalf("expected success, got: %s", res.Output)
+	}
+	if !strings.Contains(res.Output, full) {
+		t.Fatal("output tool returned truncated or missing full output")
+	}
+}
+
+// TestSubagentOutputTool_StateGuards 验证非成功状态的明确拒绝：运行中不可读、
+// 取消无产出、失败带原因——防止主 agent 把拒绝当成"没有结果"。
+func TestSubagentOutputTool_StateGuards(t *testing.T) {
+	st := newControlTestTool(t)
+	st.tasks["s1-sub-run"] = &asyncTask{id: "s1-sub-run", sessionID: "s1", name: "r", status: asyncTaskRunning, startedAt: time.Now()}
+	st.tasks["s1-sub-cancel"] = &asyncTask{id: "s1-sub-cancel", sessionID: "s1", name: "c", status: asyncTaskCanceled, startedAt: time.Now()}
+	st.tasks["s1-sub-err"] = &asyncTask{id: "s1-sub-err", sessionID: "s1", name: "e", status: asyncTaskError, startedAt: time.Now(), err: "boom"}
+	st.tasks["s2-sub-x"] = &asyncTask{id: "s2-sub-x", sessionID: "s2", name: "x", status: asyncTaskSuccess, startedAt: time.Now(), output: "secret"}
+
+	outTool := &subagentOutputTool{owner: st}
+	ctx := WithToolSessionID(context.Background(), "s1")
+
+	if res, _ := outTool.Execute(ctx, map[string]any{"sub_session_id": "s1-sub-run"}); res.Success || !strings.Contains(res.Output, "运行中") {
+		t.Fatalf("running task should be rejected with hint, got: %s", res.Output)
+	}
+	if res, _ := outTool.Execute(ctx, map[string]any{"sub_session_id": "s1-sub-cancel"}); res.Success || !strings.Contains(res.Output, "取消") {
+		t.Fatalf("canceled task should be rejected, got: %s", res.Output)
+	}
+	if res, _ := outTool.Execute(ctx, map[string]any{"sub_session_id": "s1-sub-err"}); res.Success || !strings.Contains(res.Output, "boom") {
+		t.Fatalf("failed task should surface error, got: %s", res.Output)
+	}
+	// 跨会话任务按归属校验拒绝，不泄露其他会话的输出。
+	if res, _ := outTool.Execute(ctx, map[string]any{"sub_session_id": "s2-sub-x"}); res.Success || strings.Contains(res.Output, "secret") {
+		t.Fatalf("foreign task must be rejected, got: %s", res.Output)
+	}
+	if res, _ := outTool.Execute(ctx, map[string]any{}); res.Success {
+		t.Fatal("missing sub_session_id should fail")
+	}
+}
+
+// TestSubagentOutputTool_FallsBackToSessionHistory 验证同步派发任务（不进任务
+// 注册表）的兜底路径：从子会话历史缓存取最终 assistant 回复。
+func TestSubagentOutputTool_FallsBackToSessionHistory(t *testing.T) {
+	st := newControlTestTool(t)
+	st.storeSubSession("s1-sub-9", AgentType{Name: "explorer"}, []message.Message{
+		{Role: "user", Content: "调研 X"},
+		{Role: "assistant", Content: "最终调研报告全文"},
+	})
+
+	outTool := &subagentOutputTool{owner: st}
+	res, err := outTool.Execute(WithToolSessionID(context.Background(), "s1"), map[string]any{"sub_session_id": "s1-sub-9"})
+	if err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+	if !res.Success || !strings.Contains(res.Output, "最终调研报告全文") {
+		t.Fatalf("expected final assistant reply, got: %s", res.Output)
+	}
+}
+
+// TestSubagentOutputTool_Disabled 守住禁用语义：subagent 关闭时输出工具同样
+// 退化为拒绝，不暴露任何任务数据。
+func TestSubagentOutputTool_Disabled(t *testing.T) {
+	st := newControlTestTool(t)
+	outTool := &subagentOutputTool{owner: st, disabled: true}
+	res, _ := outTool.Execute(WithToolSessionID(context.Background(), "s1"), map[string]any{"sub_session_id": "x"})
+	if res.Success || !strings.Contains(res.Output, subagentDisabledRefusal) {
+		t.Fatalf("disabled tool should refuse, got: %s", res.Output)
+	}
+}
+
+// TestFormatTruncatedOutput 守住截断标记契约：短输出原样保留；超限输出必须
+// 带截断事实、完整字符数与 subagent_output 取回指引——没有标记主 agent 只能
+// 靠"内容没写完"猜测并重复派发子 agent。
+func TestFormatTruncatedOutput(t *testing.T) {
+	short := "短输出"
+	if got := formatTruncatedOutput(short, "s1-sub-1"); got != short {
+		t.Fatalf("short output should pass through, got: %q", got)
+	}
+
+	huge := strings.Repeat("长", subagentOutputLimit+500)
+	got := formatTruncatedOutput(huge, "s1-sub-1")
+	if !strings.Contains(got, "已截断") || !strings.Contains(got, "subagent_output") || !strings.Contains(got, "s1-sub-1") {
+		t.Fatalf("truncated output missing marker or resume hint: %q", tailOf(got, 200))
+	}
+	if runes := []rune(got); len(runes) > subagentOutputLimit+200 {
+		t.Fatalf("truncated output too long: %d runes", len(runes))
+	}
+
+	noID := formatTruncatedOutput(huge, "")
+	if !strings.Contains(noID, "已截断") {
+		t.Fatal("marker required even without sub_session_id")
+	}
+	if strings.Contains(noID, "subagent_output 工具传") {
+		t.Fatal("resume hint with empty id would mislead the caller")
+	}
+}
+
+func tailOf(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[len(r)-n:])
+}

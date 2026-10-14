@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"strings"
 
 	hooks "github.com/lzq70112/agentsdk-go/pkg/hooks"
@@ -8,7 +9,10 @@ import (
 	"github.com/lzq70112/agentsdk-go/pkg/runtime/subagents"
 )
 
-const subagentOutputLimit = 2000
+// subagentOutputLimit 限制注入主会话的子 agent 输出长度（rune 数）。截断时
+// formatTruncatedOutput 会追加恢复指引，主 agent 可用 subagent_output 工具
+// 凭 sub_session_id 读取全文——截断是延迟加载，不是信息丢失。
+const subagentOutputLimit = 50000
 
 func (rt *Runtime) bindSubagentCallbacks() {
 	if rt == nil || rt.opts.subMgr == nil {
@@ -58,12 +62,14 @@ func completionStatus(status subagents.Status) string {
 }
 
 func formatSubagentSummary(status subagents.Status) string {
-	return formatSubagentResultMessage(status.Name, status.Instruction, completionStatus(status), status.Output, status.Error)
+	return formatSubagentResultMessage(status.Name, status.Instruction, completionStatus(status), status.Output, status.Error, "")
 }
 
 // formatSubagentResultMessage 拼装注入主会话 history 的子 agent 完成结果消息。
 // subMgr 的同步派发与内置 subagent tool 的后台任务共用，保证文案一致。
-func formatSubagentResultMessage(name, instruction, status, output, errText string) string {
+// subSessionID 非空时，截断标记会附带 subagent_output 工具的取回指引；
+// 传空（如 subMgr 链的 task id 语义不同）则只提示截断事实。
+func formatSubagentResultMessage(name, instruction, status, output, errText, subSessionID string) string {
 	var builder strings.Builder
 	builder.WriteString("[Subagent Result: ")
 	builder.WriteString(strings.TrimSpace(name))
@@ -72,12 +78,30 @@ func formatSubagentResultMessage(name, instruction, status, output, errText stri
 	builder.WriteString("\nStatus: ")
 	builder.WriteString(status)
 	builder.WriteString("\nOutput: ")
-	builder.WriteString(truncateString(output, subagentOutputLimit))
+	builder.WriteString(formatTruncatedOutput(output, subSessionID))
 	if trimmed := strings.TrimSpace(errText); trimmed != "" {
 		builder.WriteString("\nError: ")
 		builder.WriteString(trimmed)
 	}
 	return builder.String()
+}
+
+// formatTruncatedOutput 把超限输出截断到 subagentOutputLimit 并追加截断标记：
+// 主 agent 必须能明确知道输出被截、原文多大、如何取回全文，而不是靠
+// "内容看起来没写完"自行猜测（截断无标记会诱发重复派发子 agent 补查）。
+func formatTruncatedOutput(output, subSessionID string) string {
+	runes := []rune(strings.TrimSpace(output))
+	if len(runes) <= subagentOutputLimit {
+		return string(runes)
+	}
+	var b strings.Builder
+	b.WriteString(string(runes[:subagentOutputLimit]))
+	fmt.Fprintf(&b, "\n[已截断：完整输出共 %d 字符，以上为前 %d 字符", len(runes), subagentOutputLimit)
+	if subSessionID != "" {
+		fmt.Fprintf(&b, "；可用 subagent_output 工具传 sub_session_id=%s 读取全文", subSessionID)
+	}
+	b.WriteString("]")
+	return b.String()
 }
 
 func subagentSummaryMetadata(status subagents.Status) map[string]any {

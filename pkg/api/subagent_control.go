@@ -15,6 +15,7 @@ import (
 const (
 	subagentStatusToolName = "subagent_status"
 	subagentStopToolName   = "subagent_stop"
+	subagentOutputToolName = "subagent_output"
 )
 
 // 后台子任务的状态取值。
@@ -190,7 +191,7 @@ func (t *subagentTool) injectAsyncResult(sessionID, subSessionID, name, instruct
 		Policy: BarrierDefer,
 		Message: message.Message{
 			Role:     "user",
-			Content:  formatSubagentResultMessage(name, instruction, status, output, errText),
+			Content:  formatSubagentResultMessage(name, instruction, status, output, errText, subSessionID),
 			Metadata: subagentResultMetadata(subSessionID, name),
 		},
 	}); injectErr != nil {
@@ -313,6 +314,79 @@ func (t *subagentStopTool) Execute(ctx context.Context, params map[string]any) (
 	return &tool.ToolResult{Success: true, Output: fmt.Sprintf("已请求停止子任务 %s。停止是协作式的，子 agent 将在下一轮检查到取消信号后退出。", id)}, nil
 }
 
+// subagentOutputTool 让主 agent 读取子任务完成结果的全文。完成通知与
+// subagent_status 的输出都经 formatTruncatedOutput 截断；此工具是唯一的
+// 取回通道，保证截断不丢信息（数据在任务注册表与子会话缓存里）。
+type subagentOutputTool struct {
+	owner    *subagentTool
+	disabled bool
+}
+
+func (t *subagentOutputTool) Name() string { return subagentOutputToolName }
+
+func (t *subagentOutputTool) Description() string {
+	return `读取一个子 agent 任务的完整输出全文。
+当完成通知或任务详情里的输出带"已截断"标记，或需要回看子任务完整回报时使用。`
+}
+
+func (t *subagentOutputTool) Schema() *tool.JSONSchema {
+	return &tool.JSONSchema{
+		Type: "object",
+		Properties: map[string]any{
+			"sub_session_id": map[string]any{
+				"type":        "string",
+				"description": "子任务标识（派发结果或截断标记中的 sub_session_id）",
+			},
+		},
+		Required: []string{"sub_session_id"},
+	}
+}
+
+func (t *subagentOutputTool) Execute(ctx context.Context, params map[string]any) (*tool.ToolResult, error) {
+	if t.disabled {
+		return &tool.ToolResult{Success: false, Output: subagentDisabledRefusal}, nil
+	}
+	sessionID, ok := ToolSessionIDFromContext(ctx)
+	if !ok || strings.TrimSpace(sessionID) == "" {
+		return &tool.ToolResult{Success: false, Output: "subagent_output tool 无法获取当前 session id"}, nil
+	}
+	if t.owner == nil {
+		return &tool.ToolResult{Success: false, Output: "subagent_output tool 未绑定运行时"}, nil
+	}
+
+	id, _ := params["sub_session_id"].(string)
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return &tool.ToolResult{Success: false, Output: "subagent_output 需要 sub_session_id 参数"}, nil
+	}
+
+	if task, found := t.owner.lookupTask(sessionID, id); found {
+		switch task.status {
+		case asyncTaskRunning:
+			return &tool.ToolResult{Success: false, Output: fmt.Sprintf("子任务 %s 仍在运行中，完成后再读取输出。", id)}, nil
+		case asyncTaskSuccess:
+			return &tool.ToolResult{Success: true, Output: fmt.Sprintf("子任务 %s 完整输出（%d 字符）：\n%s", id, len([]rune(task.output)), task.output)}, nil
+		case asyncTaskCanceled:
+			return &tool.ToolResult{Success: false, Output: fmt.Sprintf("子任务 %s 已被取消，没有产出。", id)}, nil
+		default:
+			return &tool.ToolResult{Success: false, Output: fmt.Sprintf("子任务 %s 执行失败：%s", id, task.err)}, nil
+		}
+	}
+
+	// 同步派发的任务不进任务注册表，从子会话历史缓存取最终回复。
+	entry, err := t.owner.lookupSubSession(sessionID, id, "")
+	if err != nil {
+		return &tool.ToolResult{Success: false, Output: err.Error()}, nil
+	}
+	for i := len(entry.History) - 1; i >= 0; i-- {
+		msg := entry.History[i]
+		if msg.Role == "assistant" && strings.TrimSpace(msg.Content) != "" {
+			return &tool.ToolResult{Success: true, Output: fmt.Sprintf("子会话 %s 最终回复（%d 字符）：\n%s", id, len([]rune(msg.Content)), msg.Content)}, nil
+		}
+	}
+	return &tool.ToolResult{Success: false, Output: fmt.Sprintf("子会话 %s 的历史中没有可用的助手回复。", id)}, nil
+}
+
 // formatTaskLine 输出单行任务摘要，供在途列表使用。
 func formatTaskLine(task asyncTask) string {
 	return fmt.Sprintf("id=%s name=%s status=%s 已运行=%s", task.id, task.name, task.status, formatTaskDuration(task))
@@ -326,7 +400,7 @@ func formatTaskDetail(task asyncTask) string {
 		fmt.Fprintf(&b, "\ninstruction=%s", task.instruction)
 	}
 	if task.output != "" {
-		fmt.Fprintf(&b, "\noutput=%s", truncateString(task.output, subagentOutputLimit))
+		fmt.Fprintf(&b, "\noutput=%s", formatTruncatedOutput(task.output, task.id))
 	}
 	if task.err != "" {
 		fmt.Fprintf(&b, "\nerror=%s", task.err)

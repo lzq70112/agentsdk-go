@@ -18,7 +18,7 @@ func TestRuntimeBindsSubagentCompletionToHooksAndHistory(t *testing.T) {
 
 	mgr := subagents.NewManager()
 	if err := mgr.Register(subagents.Definition{Name: "worker"}, subagents.HandlerFunc(func(ctx context.Context, subCtx subagents.Context, req subagents.Request) (subagents.Result, error) {
-		return subagents.Result{Output: strings.Repeat("x", 2100)}, errors.New("boom")
+		return subagents.Result{Output: strings.Repeat("x", subagentOutputLimit+100)}, errors.New("boom")
 	})); err != nil {
 		t.Fatalf("register worker: %v", err)
 	}
@@ -76,8 +76,8 @@ func TestRuntimeBindsSubagentCompletionToHooksAndHistory(t *testing.T) {
 	if payload.Name != "worker" || payload.Status != "error" || payload.Error != "boom" {
 		t.Fatalf("unexpected payload: %+v", payload)
 	}
-	if len(payload.Output) != 2000 {
-		t.Fatalf("payload output len = %d, want 2000", len(payload.Output))
+	if len(payload.Output) != subagentOutputLimit {
+		t.Fatalf("payload output len = %d, want %d", len(payload.Output), subagentOutputLimit)
 	}
 
 	deadline := time.Now().Add(time.Second)
@@ -95,8 +95,13 @@ func TestRuntimeBindsSubagentCompletionToHooksAndHistory(t *testing.T) {
 	if last.Role != "user" {
 		t.Fatalf("last role = %q, want user", last.Role)
 	}
-	if !strings.Contains(last.Content, "[Subagent Result: worker]\nTask: inspect repo\nStatus: error\nOutput: "+strings.Repeat("x", 2000)+"\nError: boom") {
-		t.Fatalf("unexpected summary content: %q", last.Content)
+	// 输出超限被截断：注入内容须含截断标记、截断后的输出前缀与错误信息；
+	// 截断标记插在 Output 与 Error 之间，故分段断言而非整体前缀匹配。
+	if !strings.Contains(last.Content, "[Subagent Result: worker]\nTask: inspect repo\nStatus: error\nOutput: ") ||
+		!strings.Contains(last.Content, strings.Repeat("x", subagentOutputLimit)) ||
+		!strings.Contains(last.Content, "已截断") ||
+		!strings.Contains(last.Content, "\nError: boom") {
+		t.Fatalf("unexpected summary content: %q", tailOf(last.Content, 300))
 	}
 	if last.Metadata["api.synthetic"] != true || last.Metadata["api.synthetic_type"] != "subagent_result" {
 		t.Fatalf("missing synthetic marker: %+v", last.Metadata)
