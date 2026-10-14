@@ -180,6 +180,14 @@ func (t *runtimeToolExecutor) execute(ctx context.Context, call model.ToolCall, 
 			evt.IsStderr = &isStderr
 			emit(ctx, evt)
 		}
+		// 结构化工具事件出口：工具经 tool.ToolEventSink 推送协议事件（如
+		// task 工具的清单全量快照），此处适配为 StreamEvent 复用既有事件流
+		// 管道，并补全会话标识。闭包捕获外层 ctx 与 sessionID，避免依赖
+		// 工具侧再包装后的 ctx。
+		sessionID := t.sessionID
+		ctx = tool.WithToolEventSink(ctx, func(_ context.Context, ev tool.ToolEvent) {
+			emit(ctx, StreamEvent{Type: ev.Type, Name: ev.Name, Output: ev.Payload, SessionID: sessionID})
+		})
 	}
 
 	ctx = WithToolSessionID(ctx, t.sessionID)

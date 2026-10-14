@@ -208,7 +208,7 @@ func TestRegisterToolsUsesDefaultImplementations(t *testing.T) {
 		t.Fatalf("register tools: %v", err)
 	}
 	tools := registry.List()
-	expected := []string{"bash", "read", "write", "edit", "glob", "grep", "skill", "subagent", "subagent_status", "subagent_stop", "subagent_output"}
+	expected := []string{"bash", "read", "write", "edit", "glob", "grep", "skill", "task", "subagent", "subagent_status", "subagent_stop", "subagent_output"}
 	if len(tools) != len(expected) {
 		t.Fatalf("expected %d default tools, got %d", len(expected), len(tools))
 	}
