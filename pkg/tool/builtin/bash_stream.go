@@ -69,7 +69,7 @@ func (b *BashTool) StreamExecute(ctx context.Context, params map[string]interfac
 
 	bashPath, _ := ResolveBashExecutable()
 	cmd := exec.CommandContext(execCtx, bashPath, scriptPath)
-	cmd.Env = os.Environ()
+	cmd.Env = bashChildEnv(os.Environ())
 	cmd.Dir = workdir
 
 	openPipes := b.openPipes
@@ -172,9 +172,9 @@ func (b *BashTool) StreamExecute(ctx context.Context, params map[string]interfac
 		if errors.Is(execCtx.Err(), context.Canceled) {
 			return result, execCtx.Err()
 		}
-		// 非零退出码语义与 Execute 一致：白名单命令的信号性退出码
-		// （grep/diff/test 的 exit 1）不打失败标签，输出末尾标注退出码。
-		if exitCode > 0 && !isBashExitError(command, exitCode) {
+		// 非零退出码全量统一，与 Execute 一致：任何非零退出一律正常返回并
+		// 在输出末尾标注退出码，判断权交模型；超时/取消/无可靠退出码仍报错。
+		if exitCode > 0 {
 			result.Success = true
 			result.Output = appendExitCodeNote(output, exitCode)
 			return result, nil

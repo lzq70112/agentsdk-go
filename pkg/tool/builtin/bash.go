@@ -27,10 +27,10 @@ const (
 	defaultBashTimeout = 10 * time.Minute
 	maxBashTimeout     = 60 * time.Minute
 	maxBashOutputLen   = 30000
-	bashDescript       = `
+	bashDescript = `
 	Execute a bash command with a configurable timeout.
 	Prefer dedicated file tools (read/write/edit/glob/grep) over shell pipelines.
-	A non-zero exit code is not always a failure: signal-only commands (grep/diff/test, exit 1 = no match / differences / condition false) return normally with an "Exit code: N" note at the end of the output. Read the note and output to decide whether action is needed; do not retry blindly.
+	A non-zero exit code is not a tool failure: the result returns normally with an "Exit code: N" note appended to the output (grep exit 1 = no match, diff exit 1 = differences, scripts use their own codes). Read the output and the note to decide what to do next; do not retry blindly. Timeouts and commands that fail to start are still reported as errors.
 	`
 )
 
@@ -195,7 +195,7 @@ func (b *BashTool) Execute(ctx context.Context, params map[string]interface{}) (
 	// 搜 bash（WSL stub 陷阱）。解析结果进程级缓存，此处调用零成本。
 	bashPath, _ := ResolveBashExecutable()
 	cmd := exec.CommandContext(execCtx, bashPath, scriptPath)
-	cmd.Env = os.Environ()
+	cmd.Env = bashChildEnv(os.Environ())
 	cmd.Dir = workdir
 
 	spool := newBashOutputSpool(ctx, b.effectiveOutputThresholdBytes())
@@ -233,11 +233,11 @@ func (b *BashTool) Execute(ctx context.Context, params map[string]interface{}) (
 		if errors.Is(execCtx.Err(), context.DeadlineExceeded) {
 			return result, fmt.Errorf("command timeout after %s", timeout)
 		}
-		// 非零退出码语义：grep/diff/test 等命令用 exit 1 表达正常结果
-		// （无匹配、有差异、条件为假），白名单内的单条简单命令按失败阈值
-		// 判定，不打失败标签——输出末尾附加 Exit code 标注交模型自行判断；
-		// 复合命令与未知命令保守沿用 POSIX 默认（非零即失败）。
-		if exitCode > 0 && !isBashExitError(command, exitCode) {
+		// 非零退出码全量统一（对齐 Claude Code）：POSIX 的非零只表示「有话
+		// 要说」，各命令语义无法在代码侧枚举，判断权交模型——正常返回并在
+		// 输出末尾标注退出码。仅超时（上方）与取不到可靠退出码（exitCode < 0）
+		// 保留 error 路径。
+		if exitCode > 0 {
 			result.Success = true
 			result.Output = appendExitCodeNote(output, exitCode)
 			return result, nil

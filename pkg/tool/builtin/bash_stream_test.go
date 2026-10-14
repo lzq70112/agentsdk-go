@@ -156,13 +156,20 @@ func TestBashToolStreamExecuteCancelAfterStart(t *testing.T) {
 	}
 }
 
-func TestBashToolStreamExecuteCommandFailed(t *testing.T) {
+// 非零退出码全量统一（StreamExecute 与 Execute 一致）：exit 7 正常返回并标注。
+func TestBashToolStreamExecuteNonZeroExitReturnsNormally(t *testing.T) {
 	t.Parallel()
 
 	tool := NewBashToolWithSandbox("", nil)
-	_, err := tool.StreamExecute(context.Background(), map[string]any{"command": "exit 7"}, nil)
-	if err == nil || !strings.Contains(err.Error(), "command failed") {
-		t.Fatalf("expected command failed error, got %v", err)
+	res, err := tool.StreamExecute(context.Background(), map[string]any{"command": "exit 7"}, nil)
+	if err != nil || res == nil {
+		t.Fatalf("res=%v err=%v", res, err)
+	}
+	if !res.Success {
+		t.Fatalf("expected Success=true, output=%q", res.Output)
+	}
+	if !strings.Contains(res.Output, "Exit code: 7") {
+		t.Fatalf("expected exit code note, got %q", res.Output)
 	}
 }
 

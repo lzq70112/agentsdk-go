@@ -122,19 +122,20 @@ func TestBashToolExecuteIncludesSpoolError(t *testing.T) {
 	}
 }
 
-func TestBashToolExecuteCommandFailure(t *testing.T) {
+// 非零退出码全量统一：false（exit 1）不再报工具失败，正常返回并标注退出码。
+func TestBashToolExecuteNonZeroExitReturnsNormally(t *testing.T) {
 	skipIfWindows(t)
 	dir := cleanTempDir(t)
 	tool := NewBashToolWithRoot(dir)
 
 	res, err := tool.Execute(context.Background(), map[string]any{"command": "false"})
-	if err == nil || res == nil {
+	if err != nil || res == nil {
 		t.Fatalf("res=%v err=%v", res, err)
 	}
-	if res.Success {
-		t.Fatalf("expected Success=false")
+	if !res.Success {
+		t.Fatalf("expected Success=true for non-zero exit, output=%q", res.Output)
 	}
-	if !strings.Contains(err.Error(), "command failed") {
-		t.Fatalf("err=%v", err)
+	if !strings.Contains(res.Output, "Exit code: 1") {
+		t.Fatalf("expected exit code note, got %q", res.Output)
 	}
 }

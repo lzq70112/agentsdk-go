@@ -9,58 +9,9 @@ import (
 	"testing"
 )
 
-// agent-tool-issues 非零退出码语义回归：grep/diff/test 用 exit 1 表达正常
-// 结果（无匹配/有差异/条件假），白名单内的单条简单命令按失败阈值判定；
-// 复合命令与未知命令保守沿用 POSIX 默认（非零即失败），避免把真实失败
-// 改写成成功结果。
-func TestIsBashExitError(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name     string
-		command  string
-		exitCode int
-		want     bool
-	}{
-		{name: "zero is never error", command: "grep zzz f", exitCode: 0, want: false},
-		{name: "negative sentinel is error", command: "grep zzz f", exitCode: -1, want: true},
-		{name: "grep no match is benign", command: "grep zzz f", exitCode: 1, want: false},
-		{name: "grep real error", command: "grep zzz f", exitCode: 2, want: true},
-		{name: "ripgrep no match is benign", command: "rg zzz f", exitCode: 1, want: false},
-		{name: "diff differences are benign", command: "diff a b", exitCode: 1, want: false},
-		{name: "diff real error", command: "diff a b", exitCode: 2, want: true},
-		{name: "test false is benign", command: "test -f missing", exitCode: 1, want: false},
-		{name: "bracket test false is benign", command: "[ -f missing ]", exitCode: 1, want: false},
-		{name: "unknown command stays POSIX", command: "make build", exitCode: 1, want: true},
-		{name: "builtin false stays failure", command: "false", exitCode: 1, want: true},
-		{name: "exit builtin stays failure", command: "exit 7", exitCode: 7, want: true},
-		{name: "compound command stays failure", command: "grep zzz f && echo hi", exitCode: 1, want: true},
-		{name: "pipeline stays failure", command: "cat f | grep zzz", exitCode: 1, want: true},
-		{name: "or-list stays failure", command: "grep zzz f || echo miss", exitCode: 1, want: true},
-		{name: "semicolon list stays failure", command: "grep zzz f; echo done", exitCode: 1, want: true},
-		{name: "subshell stays failure", command: "(grep zzz f)", exitCode: 1, want: true},
-		{name: "command substitution stays failure", command: "$(grep zzz f)", exitCode: 1, want: true},
-		{name: "variable command stays failure", command: "$CMD f", exitCode: 1, want: true},
-		{name: "timeout wrapper stays failure", command: "timeout 5 grep zzz f", exitCode: 1, want: true},
-		{name: "quoted pipe does not split", command: `grep "a|b" f`, exitCode: 1, want: false},
-		{name: "quoted semicolon does not split", command: `grep "a;b" f`, exitCode: 1, want: false},
-		{name: "redirection keeps ownership", command: "grep zzz f > out.txt", exitCode: 1, want: false},
-		{name: "command wrapper unwrapped", command: "command grep zzz f", exitCode: 1, want: false},
-		{name: "env wrapper unwrapped", command: "env LC_ALL=C grep zzz f", exitCode: 1, want: false},
-		{name: "env -u unwrapped", command: "env -u FOO grep zzz f", exitCode: 1, want: false},
-		{name: "unknown wrapper stays failure", command: "sudo grep zzz f", exitCode: 1, want: true},
-	}
-	for _, tc := range tests {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			if got := isBashExitError(tc.command, tc.exitCode); got != tc.want {
-				t.Fatalf("isBashExitError(%q, %d) = %v, want %v", tc.command, tc.exitCode, got, tc.want)
-			}
-		})
-	}
-}
-
+// Bash 非零退出码全量统一回归（对齐 Claude Code）：任何非零退出码都正常
+// 返回（Success=true、输出末尾附 Exit code 标注、data 携带退出码），判断权
+// 交模型；仅超时、取消与取不到可靠退出码的异常路径保留 error。
 func TestBashExitCodeHelper(t *testing.T) {
 	t.Parallel()
 
@@ -75,6 +26,26 @@ func TestBashExitCodeHelper(t *testing.T) {
 	}
 }
 
+func TestBashChildEnv(t *testing.T) {
+	t.Parallel()
+
+	// 环境中已有 PYTHONIOENCODING：setdefault 语义，尊重用户显式设置。
+	withVar := []string{"PATH=/bin", "PYTHONIOENCODING=gbk", "HOME=/root"}
+	if got := bashChildEnv(withVar); len(got) != len(withVar) {
+		t.Fatalf("expected env untouched when PYTHONIOENCODING present, got %v", got)
+	}
+
+	// 环境中缺失：追加 utf-8 默认值。
+	withoutVar := []string{"PATH=/bin", "HOME=/root"}
+	got := bashChildEnv(withoutVar)
+	if len(got) != len(withoutVar)+1 {
+		t.Fatalf("expected PYTHONIOENCODING appended, got %v", got)
+	}
+	if last := got[len(got)-1]; last != "PYTHONIOENCODING=utf-8" {
+		t.Fatalf("last env entry = %q, want PYTHONIOENCODING=utf-8", last)
+	}
+}
+
 // skipIfNoBash 只在宿主上找不到可用 bash 时跳过：比 skipIfWindows 更精确，
 // Windows + Git Bash 的组合（im-robot 生产形态）同样覆盖集成路径。
 func skipIfNoBash(t *testing.T) {
@@ -85,8 +56,8 @@ func skipIfNoBash(t *testing.T) {
 	}
 }
 
-// 白名单命令的信号性退出码不再报工具失败：输出保留、末尾附 Exit code 标注、
-// data 携带退出码，模型据此自行判断（如无匹配即查询结论）。
+// grep 无匹配（exit 1）正常返回：输出保留、末尾附 Exit code 标注、data 携带
+// 退出码，模型据此自行判断（无匹配即查询结论）。
 func TestBashToolBenignExitCodeReturnsNormally(t *testing.T) {
 	skipIfNoBash(t)
 	dir := cleanTempDir(t)
@@ -97,10 +68,10 @@ func TestBashToolBenignExitCodeReturnsNormally(t *testing.T) {
 
 	res, err := tool.Execute(context.Background(), map[string]any{"command": "grep zzzz sample.txt"})
 	if err != nil {
-		t.Fatalf("benign exit should not fail: %v", err)
+		t.Fatalf("non-zero exit should not fail: %v", err)
 	}
 	if !res.Success {
-		t.Fatalf("expected Success=true for benign exit code, output=%q", res.Output)
+		t.Fatalf("expected Success=true for non-zero exit, output=%q", res.Output)
 	}
 	if !strings.Contains(res.Output, "Exit code: 1") {
 		t.Fatalf("output should carry exit code note, got %q", res.Output)
@@ -114,35 +85,61 @@ func TestBashToolBenignExitCodeReturnsNormally(t *testing.T) {
 	}
 }
 
-// 白名单外命令保持 POSIX 默认：非零即失败，错误文案不变。
-func TestBashToolNonWhitelistedFailureKeepsError(t *testing.T) {
+// 任意命令的非零退出码统一正常返回：false（exit 1）、exit 7、复合命令
+// 一视同仁，模型从输出与退出码注记自行判断。
+func TestBashToolAnyNonZeroExitReturnsNormally(t *testing.T) {
 	skipIfNoBash(t)
 	dir := cleanTempDir(t)
 	tool := NewBashToolWithRoot(dir)
 
 	res, err := tool.Execute(context.Background(), map[string]any{"command": "false"})
-	if err == nil || res == nil {
+	if err != nil || res == nil {
 		t.Fatalf("res=%v err=%v", res, err)
 	}
-	if !strings.Contains(err.Error(), "command failed") {
-		t.Fatalf("expected command failed error, got %v", err)
+	if !res.Success {
+		t.Fatalf("expected Success=true, output=%q", res.Output)
+	}
+	if !strings.Contains(res.Output, "Exit code: 1") {
+		t.Fatalf("output should carry exit code note, got %q", res.Output)
+	}
+
+	res7, err := tool.Execute(context.Background(), map[string]any{"command": "exit 7"})
+	if err != nil || res7 == nil {
+		t.Fatalf("res7=%v err=%v", res7, err)
+	}
+	if !res7.Success || !strings.Contains(res7.Output, "Exit code: 7") {
+		t.Fatalf("expected normal return with Exit code: 7, got success=%v output=%q", res7.Success, res7.Output)
+	}
+
+	compound := NewBashToolWithRoot(dir)
+	compound.AllowShellMetachars(true)
+	resC, err := compound.Execute(context.Background(), map[string]any{"command": "false && echo hi"})
+	if err != nil || resC == nil {
+		t.Fatalf("resC=%v err=%v", resC, err)
+	}
+	if !resC.Success || !strings.Contains(resC.Output, "Exit code: 1") {
+		t.Fatalf("expected compound non-zero exit to return normally, got success=%v output=%q", resC.Success, resC.Output)
 	}
 }
 
-// 复合命令保守按失败处理：即使其中一段是白名单命令，退出码也无法归属到
-// 单条简单命令，不能把可能的真失败改写成成功结果。
-func TestBashToolCompoundCommandStaysFailure(t *testing.T) {
+// 环境注入回归：bash 子进程能观察到 PYTHONIOENCODING（宿主显式设置时尊重
+// 现值，否则为 utf-8 兜底）。
+func TestBashToolChildEnvCarriesPythonIOEncoding(t *testing.T) {
 	skipIfNoBash(t)
 	dir := cleanTempDir(t)
 	tool := NewBashToolWithRoot(dir)
 	tool.AllowShellMetachars(true)
 
-	res, err := tool.Execute(context.Background(), map[string]any{"command": "grep zzzz . && echo hi"})
-	if err == nil || res == nil {
+	res, err := tool.Execute(context.Background(), map[string]any{"command": `printf '%s' "$PYTHONIOENCODING"`})
+	if err != nil || res == nil {
 		t.Fatalf("res=%v err=%v", res, err)
 	}
-	if !strings.Contains(err.Error(), "command failed") {
-		t.Fatalf("expected command failed error for compound command, got %v", err)
+	want := os.Getenv("PYTHONIOENCODING")
+	if want == "" {
+		want = "utf-8"
+	}
+	if strings.TrimSpace(res.Output) != want {
+		t.Fatalf("child env PYTHONIOENCODING = %q, want %q", res.Output, want)
 	}
 }
 
