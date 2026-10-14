@@ -55,6 +55,7 @@ type dueCronTask struct {
 	sessionID string
 	prompt    string
 	recurring bool
+	durable   bool
 	expr      *cronExpr
 }
 
@@ -67,6 +68,7 @@ type dueCronTask struct {
 type cronEngine struct {
 	inject func(sessionID string, in Injection) error
 	onFire func(CronTask)
+	store  *cronStore // 非 nil 时 durable 任务随变更落盘并在启动时恢复
 
 	mu    sync.Mutex
 	tasks map[string]*cronTaskState
@@ -113,8 +115,33 @@ func (e *cronEngine) add(spec CronTaskSpec, now time.Time) (CronTask, error) {
 	if next.IsZero() {
 		return CronTask{}, fmt.Errorf("api: cron 表达式 %q 未来 4 年内无匹配时刻", spec.Expr)
 	}
+	task, err := e.insert(spec, expr, next, now)
+	if err != nil {
+		return CronTask{}, err
+	}
+	if spec.Durable {
+		e.persistDurable()
+	}
+	e.wakeSignal()
+	return task, nil
+}
+
+// insert 在锁内登记任务并执行 durable 总量上限校验。
+func (e *cronEngine) insert(spec CronTaskSpec, expr *cronExpr, next, now time.Time) (CronTask, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if spec.Durable {
+		// durable 总量上限：超限拒绝创建（对齐 comate scheduled_prompts 语义）。
+		count := 0
+		for _, st := range e.tasks {
+			if st.task.Durable {
+				count++
+			}
+		}
+		if count >= cronDurableLimit {
+			return CronTask{}, fmt.Errorf("api: cron durable 任务已达上限 %d，请先删除部分任务", cronDurableLimit)
+		}
+	}
 	e.seq++
 	task := CronTask{
 		ID:        "cron-" + strconv.Itoa(e.seq),
@@ -127,18 +154,20 @@ func (e *cronEngine) add(spec CronTaskSpec, now time.Time) (CronTask, error) {
 		NextRun:   next,
 	}
 	e.tasks[task.ID] = &cronTaskState{task: task, expr: expr}
-	e.wakeSignal()
 	return task, nil
 }
 
 func (e *cronEngine) remove(id string) bool {
 	e.mu.Lock()
-	defer e.mu.Unlock()
-	if _, ok := e.tasks[id]; !ok {
-		return false
+	st, ok := e.tasks[id]
+	if ok {
+		delete(e.tasks, id)
 	}
-	delete(e.tasks, id)
-	return true
+	e.mu.Unlock()
+	if ok && st.task.Durable && e.store != nil {
+		e.persistDurable()
+	}
+	return ok
 }
 
 // list 返回任务快照（按创建时间排序，同刻按 ID 保证确定性）；sessionID 为
@@ -214,15 +243,20 @@ func (e *cronEngine) dueTasks(now time.Time) []dueCronTask {
 			sessionID: st.task.SessionID,
 			prompt:    st.task.Prompt,
 			recurring: st.task.Recurring,
+			durable:   st.task.Durable,
 			expr:      st.expr,
 		})
 	}
 	return due
 }
 
-// fireDue 扫描一轮到期任务并逐个触发。由循环 goroutine 周期调用。
+// fireDue 扫描一轮到期任务并逐个触发。由循环 goroutine 周期调用；
+// 扫描前先清理超期 durable 任务（7 天 TTL）。
 func (e *cronEngine) fireDue() {
 	now := e.clock()
+	if e.pruneExpired(now) {
+		e.persistDurable()
+	}
 	for _, d := range e.dueTasks(now) {
 		e.fireOne(d, now)
 	}
@@ -244,6 +278,9 @@ func (e *cronEngine) fireOne(d dueCronTask, now time.Time) {
 	snapshot, ok := e.advanceAfterFire(d, now)
 	if !ok {
 		return
+	}
+	if d.durable {
+		e.persistDurable()
 	}
 	if e.onFire != nil {
 		e.onFire(snapshot)
@@ -274,11 +311,119 @@ func (e *cronEngine) advanceAfterFire(d dueCronTask, now time.Time) (CronTask, b
 	return st.task, true
 }
 
+// attachStore 绑定持久化并立即执行一次恢复。恢复中有条目被清理时回写文件，
+// 让落盘内容与内存一致（自愈坏条目与超期任务）。
+func (e *cronEngine) attachStore(store *cronStore) {
+	e.store = store
+	if dropped := e.restore(); dropped > 0 {
+		e.persistDurable()
+	}
+}
+
+// restore 从落盘文件恢复 durable 任务，返回被清理的条目数：
+//   - 超过 7 天（cronDurableTTL）的条目按过期清理；
+//   - 错过触发点（NextRun <= now）的一次性任务按过期处理，不补跑；
+//   - recurring 错过周期不补跑，NextRun 以重启时刻为锚点重算未来触发点；
+//   - 表达式失效或字段缺失的坏条目跳过（load 层已容错一层）。
+//
+// 序号计数器推进到已恢复 ID 的最大值，避免新建任务与恢复任务撞 ID。
+func (e *cronEngine) restore() int {
+	if e.store == nil {
+		return 0
+	}
+	now := e.clock()
+	loaded := e.store.load()
+	e.mu.Lock()
+	maxSeq := 0
+	for _, task := range loaded {
+		if n := cronSeqNumber(task.ID); n > maxSeq {
+			maxSeq = n
+		}
+	}
+	dropped := 0
+	for _, task := range loaded {
+		if now.Sub(task.CreatedAt) > cronDurableTTL {
+			dropped++
+			continue
+		}
+		expr, err := parseCronExpr(task.Expr)
+		if err != nil {
+			runtimeLogger.warnf("[api:cron] durable 任务 %s 表达式失效，跳过: %v", task.ID, err)
+			dropped++
+			continue
+		}
+		if !task.NextRun.After(now) {
+			if !task.Recurring {
+				dropped++ // 重启期间错过触发点：过期处理，不补跑
+				continue
+			}
+			next := expr.next(now)
+			if next.IsZero() {
+				dropped++
+				continue
+			}
+			task.NextRun = next
+		}
+		e.tasks[task.ID] = &cronTaskState{task: task, expr: expr}
+	}
+	e.seq = maxSeq
+	e.mu.Unlock()
+	return dropped
+}
+
+// persistDurable 把当前 durable 任务快照落盘（引擎锁外做文件 I/O）。
+// 失败只告警：内存态仍正确，下次变更会重新落盘。
+func (e *cronEngine) persistDurable() {
+	if e.store == nil {
+		return
+	}
+	e.mu.Lock()
+	tasks := make([]CronTask, 0, len(e.tasks))
+	for _, st := range e.tasks {
+		if st.task.Durable {
+			tasks = append(tasks, st.task)
+		}
+	}
+	e.mu.Unlock()
+	if err := e.store.save(tasks); err != nil {
+		runtimeLogger.warnf("[api:cron] durable save failed: %v", err)
+	}
+}
+
+// pruneExpired 清理超过 7 天的 durable 任务，返回是否有清理发生。
+func (e *cronEngine) pruneExpired(now time.Time) bool {
+	if e.store == nil {
+		return false
+	}
+	e.mu.Lock()
+	pruned := false
+	for id, st := range e.tasks {
+		if st.task.Durable && now.Sub(st.task.CreatedAt) > cronDurableTTL {
+			delete(e.tasks, id)
+			pruned = true
+		}
+	}
+	e.mu.Unlock()
+	return pruned
+}
+
+// cronSeqNumber 解析 "cron-N" 形态 ID 的序号；不匹配返回 0。
+func cronSeqNumber(id string) int {
+	n, err := strconv.Atoi(strings.TrimPrefix(id, "cron-"))
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
+}
+
 // AddCronTask 为会话创建定时任务并返回任务快照。Expr 为标准 5 字段 cron 表达式
 // （分 时 日 月 星期，支持 *、区间、步进、逗号多值），非法表达式与未来 4 年
 // 无匹配时刻的表达式在创建时即报错。Recurring 为 true 按周期重复触发，为 false
-// 在下一个匹配时刻触发一次后自动删除。Durable 为 true 标记持久化意图（落盘由
-// cron_store 提供，当前仅内存）。
+// 在下一个匹配时刻触发一次后自动删除。
+//
+// Durable 为 true 时任务落盘到 {ProjectRoot}/.agents/scheduled_prompts.json 并在
+// 进程重启后恢复（7 天过期、总量上限 50、错过触发点的一次性任务不补跑）；
+// 非 durable 仅内存，重启即失。
 //
 // 到期任务以 SCHEDULED 注入经统一入口进入会话：会话闲时直写 history，忙时
 // （BarrierDefer）排队到回合结束交付，不与用户回合交错。注入成功后回调

@@ -202,8 +202,12 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		subagent.bindRuntime(rt)
 	}
 	rt.bindSubagentCallbacks()
-	// cron 引擎经统一注入入口写会话，任务创建时才惰性启动扫描循环。
+	// cron 引擎经统一注入入口写会话，任务创建时才惰性启动扫描循环；
+	// 有工程根目录时绑定落盘存储并恢复 durable 任务。
 	rt.crons = newCronEngine(rt.Inject, opts.ScheduledFireHandler)
+	if opts.ProjectRoot != "" {
+		rt.crons.attachStore(newCronStore(opts.ProjectRoot))
+	}
 	return rt, nil
 }
 
