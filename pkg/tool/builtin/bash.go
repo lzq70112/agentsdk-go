@@ -30,6 +30,7 @@ const (
 	bashDescript       = `
 	Execute a bash command with a configurable timeout.
 	Prefer dedicated file tools (read/write/edit/glob/grep) over shell pipelines.
+	A non-zero exit code is not always a failure: signal-only commands (grep/diff/test, exit 1 = no match / differences / condition false) return normally with an "Exit code: N" note at the end of the output. Read the note and output to decide whether action is needed; do not retry blindly.
 	`
 )
 
@@ -207,10 +208,13 @@ func (b *BashTool) Execute(ctx context.Context, params map[string]interface{}) (
 
 	output, outputFile, spoolErr := spool.Finalize()
 
+	exitCode := bashExitCode(runErr)
+
 	data := map[string]interface{}{
 		"workdir":     workdir,
 		"duration_ms": duration.Milliseconds(),
 		"timeout_ms":  timeout.Milliseconds(),
+		"exit_code":   exitCode,
 	}
 	if outputFile != "" {
 		data["output_file"] = outputFile
@@ -228,6 +232,15 @@ func (b *BashTool) Execute(ctx context.Context, params map[string]interface{}) (
 	if runErr != nil {
 		if errors.Is(execCtx.Err(), context.DeadlineExceeded) {
 			return result, fmt.Errorf("command timeout after %s", timeout)
+		}
+		// 非零退出码语义：grep/diff/test 等命令用 exit 1 表达正常结果
+		// （无匹配、有差异、条件为假），白名单内的单条简单命令按失败阈值
+		// 判定，不打失败标签——输出末尾附加 Exit code 标注交模型自行判断；
+		// 复合命令与未知命令保守沿用 POSIX 默认（非零即失败）。
+		if exitCode > 0 && !isBashExitError(command, exitCode) {
+			result.Success = true
+			result.Output = appendExitCodeNote(output, exitCode)
+			return result, nil
 		}
 		return result, fmt.Errorf("command failed: %w", runErr)
 	}

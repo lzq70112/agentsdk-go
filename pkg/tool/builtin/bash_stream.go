@@ -144,10 +144,13 @@ func (b *BashTool) StreamExecute(ctx context.Context, params map[string]interfac
 
 	output, outputFile, spoolErr := spool.Finalize()
 
+	exitCode := bashExitCode(runErr)
+
 	data := map[string]interface{}{
 		"workdir":     workdir,
 		"duration_ms": duration.Milliseconds(),
 		"timeout_ms":  timeout.Milliseconds(),
+		"exit_code":   exitCode,
 	}
 	if outputFile != "" {
 		data["output_file"] = outputFile
@@ -168,6 +171,13 @@ func (b *BashTool) StreamExecute(ctx context.Context, params map[string]interfac
 		}
 		if errors.Is(execCtx.Err(), context.Canceled) {
 			return result, execCtx.Err()
+		}
+		// 非零退出码语义与 Execute 一致：白名单命令的信号性退出码
+		// （grep/diff/test 的 exit 1）不打失败标签，输出末尾标注退出码。
+		if exitCode > 0 && !isBashExitError(command, exitCode) {
+			result.Success = true
+			result.Output = appendExitCodeNote(output, exitCode)
+			return result, nil
 		}
 		return result, fmt.Errorf("command failed: %w", runErr)
 	}
