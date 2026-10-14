@@ -146,7 +146,7 @@ func TestParseGlobPatternErrors(t *testing.T) {
 }
 
 func TestGlobHelpers(t *testing.T) {
-	output := formatGlobOutput([]string{"a", "b"}, true)
+	output := formatGlobOutput([]string{"a", "b"}, true, 0)
 	if !strings.Contains(output, "truncated") {
 		t.Fatalf("expected truncated note in %q", output)
 	}
@@ -161,8 +161,9 @@ func TestNilContextExecutions(t *testing.T) {
 	}
 }
 
-// TestGlobToolRespectsGitignore verifies that GlobTool filters out .gitignore patterns.
-func TestGlobToolRespectsGitignore(t *testing.T) {
+// TestGlobToolHonorsGitignoreWhenEnabled verifies that GlobTool filters out
+// .gitignore patterns when the host explicitly opts in (SetRespectGitignore(true)).
+func TestGlobToolHonorsGitignoreWhenEnabled(t *testing.T) {
 	skipIfWindows(t)
 	dir := cleanTempDir(t)
 
@@ -183,9 +184,9 @@ func TestGlobToolRespectsGitignore(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(nodeModules, "package.json"), []byte("{}"), 0600)
 
 	tool := NewGlobToolWithRoot(dir)
-	// respectGitignore is true by default
+	tool.SetRespectGitignore(true)
 
-	res, err := tool.Execute(context.Background(), map[string]any{"pattern": "*"})
+	res, err := tool.Execute(context.Background(), map[string]any{"pattern": "**/*"})
 	if err != nil {
 		t.Fatalf("glob failed: %v", err)
 	}
@@ -206,6 +207,73 @@ func TestGlobToolRespectsGitignore(t *testing.T) {
 	// Should NOT include node_modules (directory ignored)
 	if strings.Contains(res.Output, "node_modules") {
 		t.Errorf("Expected node_modules to be filtered out: %s", res.Output)
+	}
+
+	// 全部命中被滤光时空结果要说明原因（agent-tool-issues P8 透明化）。
+	if data, ok := res.Data.(map[string]any); ok {
+		if hidden, _ := data["hidden_by_gitignore"].(int); hidden < 2 {
+			t.Errorf("expected hidden_by_gitignore >= 2 (debug.log + package.json), got %v", data["hidden_by_gitignore"])
+		}
+	}
+}
+
+// TestGlobToolGitignoreBypassedByDefault verifies the Claude Code/Comate aligned
+// default: .gitignore does not constrain file discovery, so gitignored files and
+// directories' contents show up, while VCS metadata dirs (.git 等) never do.
+func TestGlobToolGitignoreBypassedByDefault(t *testing.T) {
+	skipIfWindows(t)
+	dir := cleanTempDir(t)
+
+	gitignoreContent := "*.log\ndocs/\n"
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(gitignoreContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0600)
+	_ = os.WriteFile(filepath.Join(dir, "debug.log"), []byte("debug output"), 0600)
+	if err := os.MkdirAll(filepath.Join(dir, "docs", "notes"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(filepath.Join(dir, "docs", "spec.md"), []byte("# spec"), 0600)
+	if err := os.MkdirAll(filepath.Join(dir, ".git", "objects"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(filepath.Join(dir, ".git", "objects", "abc"), []byte("x"), 0600)
+
+	tool := NewGlobToolWithRoot(dir)
+	// 默认 respectGitignore=false：被忽略的 debug.log 与 docs/spec.md 都可见。
+
+	res, err := tool.Execute(context.Background(), map[string]any{"pattern": "**/*.md"})
+	if err != nil {
+		t.Fatalf("glob failed: %v", err)
+	}
+	// P8 核心场景：gitignore 里的 docs/ 不再挡住文件发现。
+	if !strings.Contains(res.Output, "spec.md") {
+		t.Fatalf("Expected gitignored docs/spec.md in output by default: %s", res.Output)
+	}
+	if data, ok := res.Data.(map[string]any); ok {
+		if label, _ := data["ignore_files"].(string); label != "bypassed" {
+			t.Errorf("expected ignore_files=bypassed by default, got %v", data["ignore_files"])
+		}
+	}
+
+	resAll, err := tool.Execute(context.Background(), map[string]any{"pattern": "**/*.log"})
+	if err != nil {
+		t.Fatalf("glob failed: %v", err)
+	}
+	if !strings.Contains(resAll.Output, "debug.log") {
+		t.Fatalf("Expected gitignored debug.log in output by default: %s", resAll.Output)
+	}
+
+	// VCS 元数据目录任何 pattern 下都不出现（遍历层剪枝）。
+	resGit, err := tool.Execute(context.Background(), map[string]any{"pattern": "**/*"})
+	if err != nil {
+		t.Fatalf("glob failed: %v", err)
+	}
+	if strings.Contains(resGit.Output, ".git") {
+		t.Fatalf("Expected .git contents to be pruned: %s", resGit.Output)
+	}
+	if !strings.Contains(resGit.Output, "spec.md") || !strings.Contains(resGit.Output, "debug.log") {
+		t.Fatalf("Expected full discovery (gitignored included, dirs excluded): %s", resGit.Output)
 	}
 }
 

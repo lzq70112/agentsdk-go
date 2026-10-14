@@ -146,19 +146,26 @@ func TestGlobToolExecuteRespectsGitignore(t *testing.T) {
 	}
 
 	tool := NewGlobToolWithRoot(root)
+	tool.SetRespectGitignore(true)
 	res, err := tool.Execute(context.Background(), map[string]interface{}{"pattern": "*.txt"})
 	if err != nil {
 		t.Fatalf("execute failed: %v", err)
 	}
-	if !res.Success || strings.TrimSpace(res.Output) != "no matches" {
-		t.Fatalf("expected no matches output due to gitignore, got %q", res.Output)
+	// P8 透明化：命中被 gitignore 全部隐藏时空结果必须说明原因。
+	if !res.Success || strings.TrimSpace(res.Output) != "no matches (1 paths hidden by .gitignore)" {
+		t.Fatalf("expected hidden-by-gitignore output, got %q", res.Output)
+	}
+	if data, ok := res.Data.(map[string]interface{}); ok {
+		if hidden, _ := data["hidden_by_gitignore"].(int); hidden != 1 {
+			t.Fatalf("expected hidden_by_gitignore=1, got %v", data["hidden_by_gitignore"])
+		}
 	}
 }
 
 func TestFormatGlobOutputAndDisplayPathFallback(t *testing.T) {
 	t.Parallel()
 
-	if got := formatGlobOutput(nil, false); got != "no matches" {
+	if got := formatGlobOutput(nil, false, 0); got != "no matches" {
 		t.Fatalf("unexpected output %q", got)
 	}
 	root := t.TempDir()
