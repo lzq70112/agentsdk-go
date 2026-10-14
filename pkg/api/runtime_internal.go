@@ -124,6 +124,7 @@ func (rt *Runtime) runAgentWithMiddleware(prep preparedRun, extras ...middleware
 		host:      "localhost",
 		sessionID: prep.normalized.SessionID,
 		deferred:  rt.deferred,
+		questions: rt.questions,
 	}
 
 	chainItems := make([]middleware.Middleware, 0, len(rt.opts.Middleware)+len(extras))
@@ -216,6 +217,10 @@ func (rt *Runtime) runLoop(prep preparedRun, mdl model.Model, hookAdapter *runti
 			return last, err
 		}
 		if rt.opts.MaxIterations > 0 && iteration >= rt.opts.MaxIterations {
+			// ErrMaxIterations 静默返回会让调用方无从排查（事件流里只有一个 error），
+			// 这里显式记录上限值与当前会话。
+			runtimeLogger.printf("[api:runLoop] session=%s request=%s max iterations reached: limit=%d",
+				strings.TrimSpace(prep.normalized.SessionID), strings.TrimSpace(prep.normalized.RequestID), rt.opts.MaxIterations)
 			runErr = ErrMaxIterations
 			return last, ErrMaxIterations
 		}

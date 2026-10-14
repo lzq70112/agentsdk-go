@@ -49,6 +49,7 @@ type runtimeToolExecutor struct {
 	host      string
 	sessionID string
 	deferred  *deferredToolState
+	questions *questionRegistry
 }
 
 func (t *runtimeToolExecutor) withoutHistory() *runtimeToolExecutor {
@@ -191,6 +192,15 @@ func (t *runtimeToolExecutor) execute(ctx context.Context, call model.ToolCall, 
 	}
 
 	ctx = WithToolSessionID(ctx, t.sessionID)
+	// 提问挂起原语：ask_user_question 工具经它登记问题并阻塞等待答案。
+	// emit 可能为 nil（非流式运行），适配器内部自行跳过事件推送。
+	if t.questions != nil {
+		ctx = tool.WithQuestionAsker(ctx, &questionAskerAdapter{
+			registry:  t.questions,
+			sessionID: t.sessionID,
+			emit:      streamEmitFromContext(ctx),
+		})
+	}
 	result, err := t.executor.Execute(ctx, callSpec)
 	if err != nil {
 		runtimeLogger.warnf("[api:toolExec] tool=%s id=%s session=%s failed: %v", call.Name, call.ID, t.sessionID, err)

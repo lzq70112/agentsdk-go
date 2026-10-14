@@ -72,6 +72,7 @@ type Runtime struct {
 	subagent  *subagentTool
 	reminders *reminderEngine
 	crons     *cronEngine
+	questions *questionRegistry
 
 	mu sync.RWMutex
 
@@ -208,6 +209,7 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	if opts.ProjectRoot != "" {
 		rt.crons.attachStore(newCronStore(opts.ProjectRoot))
 	}
+	rt.questions = newQuestionRegistry()
 	return rt, nil
 }
 

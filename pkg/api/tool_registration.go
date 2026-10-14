@@ -184,13 +184,14 @@ func builtinToolFactories(root string, sandboxDisabled bool, entry EntryPoint, s
 	factories["glob"] = globCtor
 	factories["skill"] = func() tool.Tool { return toolbuiltin.NewSkillTool(skReg, nil) }
 	factories["task"] = func() tool.Tool { return toolbuiltin.NewTaskTool(&toolbuiltin.TaskStore{}) }
+	factories[toolbuiltin.AskUserQuestionName] = func() tool.Tool { return toolbuiltin.NewAskUserQuestionTool() }
 
 	return factories
 }
 
 func builtinOrder(entry EntryPoint) []string {
 	_ = entry
-	return []string{"bash", "read", "write", "edit", "glob", "grep", "skill", "task", "subagent"}
+	return []string{"bash", "read", "write", "edit", "glob", "grep", "skill", "task", toolbuiltin.AskUserQuestionName, "subagent"}
 }
 
 func filterBuiltinNames(enabled []string, order []string) []string {
