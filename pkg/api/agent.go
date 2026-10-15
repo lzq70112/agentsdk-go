@@ -137,6 +137,7 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	opts.Model = mdl
 
 	sbox, sbRoot := buildSandboxManager(opts, settings)
+	builder.AddSection(SystemPromptSectionEnvironment, buildEnvironmentSection(opts.ProjectRoot, sbRoot), SystemPromptPriorityEnvironment)
 
 	skReg, skErrs := buildSkillsRegistry(opts)
 	for _, err := range skErrs {
@@ -150,12 +151,22 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	}
 	opts.subMgr = subMgr
 
+	if listing := buildSkillsListing(skReg); listing != "" {
+		builder.AddSection(SystemPromptSectionSkills, listing, SystemPromptPrioritySkills)
+	}
+	if listing := buildSubagentsListing(subMgr); listing != "" {
+		builder.AddSection(SystemPromptSectionSubagents, listing, SystemPromptPrioritySubagents)
+	}
+
 	registry := tool.NewRegistry()
 	subagent, err := registerTools(registry, opts, settings, opts.skReg)
 	if err != nil {
 		return nil, err
 	}
 	mcpServers := collectMCPServers(settings, opts.MCPServers, opts.DisabledMCP)
+	if listing := buildMCPInstructionsListing(mcpServers); listing != "" {
+		builder.AddSection(SystemPromptSectionMCPInstructions, listing, SystemPromptPriorityMCPInstructions)
+	}
 	if err := registerMCPServers(ctx, registry, sbox, mcpServers); err != nil {
 		return nil, err
 	}

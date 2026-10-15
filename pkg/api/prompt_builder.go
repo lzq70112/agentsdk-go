@@ -7,15 +7,19 @@ import (
 
 const (
 	SystemPromptSectionIdentity        = "identity"
+	SystemPromptSectionEnvironment     = "environment"
 	SystemPromptSectionRules           = "rules"
 	SystemPromptSectionSkills          = "skills"
+	SystemPromptSectionSubagents       = "subagents"
 	SystemPromptSectionTools           = "tools"
 	SystemPromptSectionMemory          = "memory"
 	SystemPromptSectionMCPInstructions = "mcp-instructions"
 
 	SystemPromptPriorityIdentity        = 0
+	SystemPromptPriorityEnvironment     = 5
 	SystemPromptPriorityRules           = 10
 	SystemPromptPrioritySkills          = 20
+	SystemPromptPrioritySubagents       = 25
 	SystemPromptPriorityTools           = 30
 	SystemPromptPriorityMemory          = 40
 	SystemPromptPriorityMCPInstructions = 50
