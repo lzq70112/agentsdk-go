@@ -65,3 +65,37 @@ func TestLoadFromFSRespectsDisableAutoActivation(t *testing.T) {
 		t.Fatalf("expected DisableAutoActivation=true, got %+v", regs[0].Definition)
 	}
 }
+
+// 默认关闭自动激活：未写字段的技能不参与 Match；显式写 false 才开启。
+func TestLoadFromFSDefaultsAutoActivationOff(t *testing.T) {
+	root := t.TempDir()
+	write := func(name, frontmatter string) {
+		lines := []string{"---", "name: " + name, "description: d"}
+		if frontmatter != "" {
+			lines = append(lines, frontmatter)
+		}
+		lines = append(lines, "---", "body")
+		mustWrite(t, filepath.Join(root, ".agents", "skills", name, "SKILL.md"), strings.Join(lines, "\n"))
+	}
+	write("implicit", "")
+	write("explicit-off", "disable-auto-activation: false")
+	write("explicit-on", "disable-auto-activation: true")
+
+	regs, errs := LoadFromFS(LoaderOptions{ProjectRoot: root})
+	if len(errs) != 0 || len(regs) != 3 {
+		t.Fatalf("unexpected load result regs=%d errs=%v", len(regs), errs)
+	}
+	byName := map[string]SkillRegistration{}
+	for _, reg := range regs {
+		byName[reg.Definition.Name] = reg
+	}
+	if !byName["implicit"].Definition.DisableAutoActivation {
+		t.Fatalf("implicit skill should default to auto-activation off")
+	}
+	if !byName["explicit-on"].Definition.DisableAutoActivation {
+		t.Fatalf("explicit true should keep auto-activation off")
+	}
+	if byName["explicit-off"].Definition.DisableAutoActivation {
+		t.Fatalf("explicit false should enable auto-activation")
+	}
+}

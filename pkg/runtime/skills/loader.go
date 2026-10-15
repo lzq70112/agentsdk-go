@@ -128,7 +128,9 @@ type SkillMetadata struct {
 	Metadata              map[string]string `yaml:"metadata,omitempty"`
 	AllowedTools          ToolList          `yaml:"allowed-tools,omitempty"`
 	Paths                 []string          `yaml:"paths,omitempty"`
-	DisableAutoActivation bool              `yaml:"disable-auto-activation,omitempty"`
+	// DisableAutoActivation 是指针以区分「未写」与「显式 false」：
+	// 未写时默认禁用自动激活（见 skillFileToRegistration 的推导）。
+	DisableAutoActivation *bool `yaml:"disable-auto-activation,omitempty"`
 }
 
 type SkillRegistration struct {
@@ -199,7 +201,13 @@ func skillFileToRegistration(file SkillFile) SkillRegistration {
 		Description: skillDisplayDescription(file.Metadata),
 		Metadata:    buildDefinitionMetadata(file),
 	}
-	def.DisableAutoActivation = file.Metadata.DisableAutoActivation
+	// 默认禁用自动激活：技能只经清单/点名进入上下文；显式写
+	// disable-auto-activation: false 的技能才参与 Match 自动触发。
+	if file.Metadata.DisableAutoActivation != nil {
+		def.DisableAutoActivation = *file.Metadata.DisableAutoActivation
+	} else {
+		def.DisableAutoActivation = true
+	}
 	if len(file.Metadata.Paths) > 0 {
 		def.Matchers = append(def.Matchers, PathMatcher{Patterns: append([]string(nil), file.Metadata.Paths...)})
 	}

@@ -24,7 +24,9 @@ type Definition struct {
 	Priority    int
 	MutexKey    string
 	// DisableAutoActivation keeps the skill available for manual invocation
-	// while excluding it from automatic activation matching.
+	// while excluding it from automatic activation matching. SKILL.md 加载
+	// 时默认为 true（不自动激活）；frontmatter 显式写
+	// disable-auto-activation: false 才参与自动触发。
 	DisableAutoActivation bool
 	Metadata              map[string]string
 	Matchers              []Matcher

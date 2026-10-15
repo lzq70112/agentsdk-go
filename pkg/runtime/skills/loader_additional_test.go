@@ -45,6 +45,7 @@ func TestLoadFromFSRecursivePathsAndWhenToUse(t *testing.T) {
 		"name: go-skill",
 		"description: generic desc",
 		"when_to_use: use this for go files",
+		"disable-auto-activation: false",
 		"paths:",
 		"  - '*.go'",
 		"  - 'pkg/**/*.go'",
