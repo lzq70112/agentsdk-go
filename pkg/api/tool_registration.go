@@ -153,28 +153,31 @@ func builtinToolFactories(root string, sandboxDisabled bool, entry EntryPoint, s
 		return toolbuiltin.NewEditToolWithRoot(root)
 	}
 
-	respectGitignore := true
+	// glob 对齐 Claude Code 文件发现语义：默认不尊重 gitignore（Data 带
+	// ignore_files=bypassed）；grep 对齐 ripgrep：默认尊重。settings 显式
+	// 配置 respectGitignore 时两者都跟随配置。
+	globRespect, grepRespect := false, true
 	if settings != nil && settings.RespectGitignore != nil {
-		respectGitignore = *settings.RespectGitignore
+		globRespect, grepRespect = *settings.RespectGitignore, *settings.RespectGitignore
 	}
 	grepCtor := func() tool.Tool {
 		if sandboxDisabled {
 			grep := toolbuiltin.NewGrepToolWithSandbox(root, nil)
-			grep.SetRespectGitignore(respectGitignore)
+			grep.SetRespectGitignore(grepRespect)
 			return grep
 		}
 		grep := toolbuiltin.NewGrepToolWithRoot(root)
-		grep.SetRespectGitignore(respectGitignore)
+		grep.SetRespectGitignore(grepRespect)
 		return grep
 	}
 	globCtor := func() tool.Tool {
 		if sandboxDisabled {
 			glob := toolbuiltin.NewGlobToolWithSandbox(root, nil)
-			glob.SetRespectGitignore(respectGitignore)
+			glob.SetRespectGitignore(globRespect)
 			return glob
 		}
 		glob := toolbuiltin.NewGlobToolWithRoot(root)
-		glob.SetRespectGitignore(respectGitignore)
+		glob.SetRespectGitignore(globRespect)
 		return glob
 	}
 	factories["bash"] = bashCtor

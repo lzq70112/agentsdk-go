@@ -104,3 +104,42 @@ func containsString(list []string, target string) bool {
 	}
 	return false
 }
+
+// settings 未配置 respectGitignore 时的注册路径默认值：glob 对齐 Claude Code
+// 文件发现语义（bypass，Data 带 ignore_files=bypassed），grep 对齐 ripgrep
+// （尊重）。堵住注册默认覆盖构造默认的盲区（b5190a5 复测翻车根因）。
+func TestBuiltinToolsGitignoreDefaultsWhenUnset(t *testing.T) {
+	dir := t.TempDir()
+	root, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		root = dir
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".gitignore"), []byte("ignored.txt\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "ignored.txt"), []byte("HELLO\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "keep.txt"), []byte("HELLO\n"), 0o600))
+
+	factories := builtinToolFactories(root, false, EntryPointCLI, nil, nil)
+
+	globRes, err := factories["glob"]().Execute(context.Background(), map[string]interface{}{"pattern": "*"})
+	require.NoError(t, err)
+	globData, ok := globRes.Data.(map[string]interface{})
+	require.True(t, ok)
+	if label := globData["ignore_files"]; label != "bypassed" {
+		t.Fatalf("expected ignore_files=bypassed by default, got %v", label)
+	}
+	matches := globData["matches"].([]string)
+	require.True(t, containsString(matches, "ignored.txt"), "glob should bypass gitignore by default")
+	require.True(t, containsString(matches, "keep.txt"))
+
+	grepRes, err := factories["grep"]().Execute(context.Background(), map[string]interface{}{
+		"pattern":     "HELLO",
+		"path":        ".",
+		"output_mode": "files_with_matches",
+		"head_limit":  100,
+	})
+	require.NoError(t, err)
+	files, ok := grepRes.Data.(map[string]interface{})["files"].([]string)
+	require.True(t, ok)
+	require.False(t, containsString(files, "ignored.txt"), "grep should respect gitignore by default")
+	require.True(t, containsString(files, "keep.txt"))
+}
