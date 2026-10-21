@@ -240,6 +240,10 @@ type Request struct {
 	Tags               map[string]string
 	Channels           []string
 	Metadata           map[string]any
+	// UserMetadata 随本回合的 user 消息写入会话历史 Metadata（与时间戳等
+	// 框架键共存，键冲突时以宿主为准），随历史序列化自动落盘；不参与子任务
+	// dispatch 元数据（那是 Metadata 的用途）。
+	UserMetadata map[string]any
 	TeamMembers        []subagents.TeamMember
 	TeamMaxAgents      int
 	TeamMaxConcurrency int

@@ -131,3 +131,69 @@ func TestRunLoopStampsMessageTimestamps(t *testing.T) {
 		t.Fatalf("injected message timestamp is not int64: %T", v)
 	}
 }
+
+// TestRunLoopMergesUserMetadataIntoHistory 守住 Request.UserMetadata 约定：
+// 宿主随请求提供的用户级元数据（如附件摘要）合并进本回合 user 消息的
+// Metadata 并随历史落盘读回，供上层渲染消息附件；不影响后续 assistant 消息。
+func TestRunLoopMergesUserMetadataIntoHistory(t *testing.T) {
+	ctx := context.Background()
+	rt, err := New(ctx, Options{
+		ModelFactory: recordingMockModelFactory{model: &recordingMockModel{}},
+		ProjectRoot:  t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("create runtime: %v", err)
+	}
+	defer rt.Close()
+
+	sessionID := "um-session"
+	events, err := rt.RunStream(ctx, Request{
+		SessionID: sessionID,
+		Prompt:    "看这张图",
+		UserMetadata: map[string]any{
+			"attachments": []map[string]string{
+				{"kind": "image", "name": "a.png", "mediaType": "image/png"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("run stream: %v", err)
+	}
+	for range events {
+	}
+
+	hist, ok := rt.SessionHistory(sessionID)
+	if !ok || len(hist) == 0 {
+		t.Fatalf("expected non-empty history, got ok=%v len=%d", ok, len(hist))
+	}
+	var userMsg *message.Message
+	for i := range hist {
+		if hist[i].Role == "user" {
+			userMsg = &hist[i]
+			break
+		}
+	}
+	if userMsg == nil {
+		t.Fatal("no user message in history")
+	}
+	atts, ok := userMsg.Metadata["attachments"]
+	if !ok {
+		t.Fatalf("user message missing attachments metadata: %+v", userMsg.Metadata)
+	}
+	list, ok := atts.([]map[string]string)
+	if !ok || len(list) != 1 || list[0]["name"] != "a.png" {
+		t.Fatalf("attachments metadata mismatch: %#v", atts)
+	}
+	if _, ok := userMsg.Metadata[metadataTimestamp]; !ok {
+		t.Fatal("user metadata merge must not clobber framework timestamp")
+	}
+	// assistant 消息不受影响
+	for _, m := range hist {
+		if m.Role == "assistant" {
+			if _, exists := m.Metadata["attachments"]; exists {
+				t.Fatal("assistant message should not carry user metadata")
+			}
+			break
+		}
+	}
+}

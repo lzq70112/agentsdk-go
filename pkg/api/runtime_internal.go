@@ -166,6 +166,11 @@ func (rt *Runtime) runLoop(prep preparedRun, mdl model.Model, hookAdapter *runti
 			Content:  strings.TrimSpace(prep.prompt),
 			Metadata: map[string]any{metadataTimestamp: time.Now().UnixMilli()},
 		}
+		// 宿主随请求提供的用户级元数据（如附件摘要）合并进 user 消息，
+		// 随历史序列化自动落盘；键冲突时以宿主为准。
+		for k, v := range prep.normalized.UserMetadata {
+			userMsg.Metadata[k] = v
+		}
 		if len(prep.contentBlocks) > 0 {
 			userMsg.ContentBlocks = convertAPIContentBlocks(prep.contentBlocks)
 		}
