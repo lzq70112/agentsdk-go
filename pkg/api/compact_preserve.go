@@ -18,6 +18,10 @@ const (
 	metadataTimestamp = "api.timestamp"
 )
 
+// MetadataTimestamp 导出消息时间戳的 Metadata 键（值约定见 metadataTimestamp），
+// 供宿主从读取的历史消息中取时间渲染，避免跨仓库复制字符串字面量。
+const MetadataTimestamp = metadataTimestamp
+
 // isSyntheticMessage 判定消息是否为平台注入的合成消息（环境事实类）。
 func isSyntheticMessage(msg message.Message) bool {
 	if msg.Metadata == nil {
