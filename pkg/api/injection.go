@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/lzq70112/agentsdk-go/pkg/message"
 )
@@ -63,10 +64,15 @@ func (rt *Runtime) Inject(sessionID string, in Injection) error {
 	default:
 		return fmt.Errorf("api: unknown injection kind %q", in.Kind)
 	}
+	// 非 user kind 的消息强制携带 synthetic 标记（缺失时补齐），与压缩豁免
+	// （compact_preserve.go）联动：注入的环境事实永不压缩。
+	// 全部注入消息统一打时间戳（与 runLoop 的 user/assistant Append 一致），
+	// 使注入的环境事实在历史里也有可渲染的时间位置。
+	if in.Message.Metadata == nil {
+		in.Message.Metadata = map[string]any{}
+	}
+	in.Message.Metadata[metadataTimestamp] = time.Now().UnixMilli()
 	if in.Kind != InjectionKindUser && !isSyntheticMessage(in.Message) {
-		if in.Message.Metadata == nil {
-			in.Message.Metadata = map[string]any{}
-		}
 		in.Message.Metadata[metadataSynthetic] = true
 		in.Message.Metadata[metadataSyntheticKey] = string(in.Kind)
 	}

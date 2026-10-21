@@ -12,6 +12,10 @@ import (
 const (
 	metadataSynthetic    = "api.synthetic"
 	metadataSyntheticKey = "api.synthetic_type"
+	// metadataTimestamp 是消息写入会话历史时打的时间戳（UnixMilli）：
+	// user/assistant 消息在 runLoop Append 时写入，注入消息在 Inject 时写入。
+	// 上层（如 IM Admin UI）据此渲染时间分隔线；旧历史无此键时上层降级不显示。
+	metadataTimestamp = "api.timestamp"
 )
 
 // isSyntheticMessage 判定消息是否为平台注入的合成消息（环境事实类）。

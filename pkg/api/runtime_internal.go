@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"maps"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	hooks "github.com/lzq70112/agentsdk-go/pkg/hooks"
@@ -160,7 +161,11 @@ func (rt *Runtime) runLoop(prep preparedRun, mdl model.Model, hookAdapter *runti
 	}
 
 	if strings.TrimSpace(prep.prompt) != "" || len(prep.contentBlocks) > 0 {
-		userMsg := message.Message{Role: "user", Content: strings.TrimSpace(prep.prompt)}
+		userMsg := message.Message{
+			Role:     "user",
+			Content:  strings.TrimSpace(prep.prompt),
+			Metadata: map[string]any{metadataTimestamp: time.Now().UnixMilli()},
+		}
 		if len(prep.contentBlocks) > 0 {
 			userMsg.ContentBlocks = convertAPIContentBlocks(prep.contentBlocks)
 		}
@@ -299,6 +304,7 @@ func (rt *Runtime) runLoop(prep preparedRun, mdl model.Model, hookAdapter *runti
 			Role:             resp.Message.Role,
 			Content:          strings.TrimSpace(resp.Message.Content),
 			ReasoningContent: resp.Message.ReasoningContent,
+			Metadata:         map[string]any{metadataTimestamp: time.Now().UnixMilli()},
 		}
 		if len(resp.Message.ToolCalls) > 0 {
 			assistant.ToolCalls = make([]message.ToolCall, len(resp.Message.ToolCalls))
