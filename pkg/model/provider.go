@@ -169,6 +169,18 @@ func (p *OpenAIProvider) Model(ctx context.Context) (Model, error) {
 	return mdl, nil
 }
 
+// SetReasoningEffort 运行时热更推理力度档位（low/medium/high；空 = 模型默认）。
+// 与 Model() 的构建路径共用同一把锁（NewOpenAI 在写锁内读 ReasoningEffort，
+// 裸写公开字段会构成 data race）；同时失效缓存实例，CacheTTL>0 的部署在
+// 下一次 Model() 时以新档位重建。
+func (p *OpenAIProvider) SetReasoningEffort(effort string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.ReasoningEffort = strings.TrimSpace(effort)
+	p.cached = nil
+	p.expires = time.Time{}
+}
+
 func (p *OpenAIProvider) resolveAPIKey() string {
 	if key := strings.TrimSpace(p.APIKey); key != "" {
 		return key
