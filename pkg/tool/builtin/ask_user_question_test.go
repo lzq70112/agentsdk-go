@@ -45,8 +45,8 @@ func TestAskUserQuestionReturnsAnswer(t *testing.T) {
 	}
 }
 
-// TestAskUserQuestionTimeoutNote 固化超时路径：超时是"成功结果 + 超时说明"，
-// 模型据此自行继续，回合不悬挂。
+// TestAskUserQuestionTimeoutNote 固化超时路径：超时是"成功结果 + 超时说明 +
+// EndTurn 收尾标记"，本回合到此结束，等待用户指示而非模型自主继续。
 func TestAskUserQuestionTimeoutNote(t *testing.T) {
 	asker := &fakeAsker{err: tool.ErrQuestionTimeout}
 	result, err := NewAskUserQuestionTool().Execute(
@@ -58,6 +58,9 @@ func TestAskUserQuestionTimeoutNote(t *testing.T) {
 	}
 	if !result.Success {
 		t.Fatalf("超时应为成功结果: %+v", result)
+	}
+	if !result.EndTurn {
+		t.Fatalf("超时结果应带 EndTurn 收尾标记: %+v", result)
 	}
 	if !strings.Contains(result.Output, "30 秒") || !strings.Contains(result.Output, "超时") {
 		t.Fatalf("超时说明应包含时长: %q", result.Output)

@@ -196,9 +196,10 @@ func TestRunStreamSuspendsOnQuestion(t *testing.T) {
 	}
 }
 
-// TestRunStreamQuestionTimeoutContinues 端到端固化超时路径：超时说明进入
-// 历史后回合自动继续（不悬挂）。timeout_seconds: 1 → 约 1 秒真实等待。
-func TestRunStreamQuestionTimeoutContinues(t *testing.T) {
+// TestRunStreamQuestionTimeoutEndsTurn 端到端固化超时路径：超时说明进入
+// 历史后回合立即收尾——不再进行下一轮模型迭代，等待用户给出指示。
+// timeout_seconds: 1 → 约 1 秒真实等待。
+func TestRunStreamQuestionTimeoutEndsTurn(t *testing.T) {
 	root := newClaudeProject(t)
 	mdl := &stubModel{responses: []*model.Response{
 		{Message: model.Message{Role: "assistant", ToolCalls: []model.ToolCall{{
@@ -226,6 +227,9 @@ func TestRunStreamQuestionTimeoutContinues(t *testing.T) {
 		if sessionID == "" {
 			sessionID = evt.SessionID
 		}
+	}
+	if len(mdl.requests) != 1 {
+		t.Fatalf("超时收尾后不应有下一轮模型调用，实际 %d 次", len(mdl.requests))
 	}
 	hist, ok := rt.SessionHistory(sessionID)
 	if !ok {

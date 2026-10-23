@@ -19,7 +19,8 @@ const QuestionAskedEventType = "question_asked"
 
 // AskUserQuestionTool 让 agent 在需要用户决策时发起提问并挂起等待回答。
 // 提问即挂起：工具阻塞到收到答案或超时为止，期间不执行后续工具；收到答案
-// 后回合携带答案继续，超时则带着超时说明自动继续（不悬挂）。
+// 后回合携带答案继续；超时则本回合立即收尾（EndTurn），等待用户给出进一步
+// 指示后再继续，不做自主决策。
 type AskUserQuestionTool struct{}
 
 // NewAskUserQuestionTool 创建提问工具。
@@ -34,8 +35,8 @@ func (t *AskUserQuestionTool) Name() string { return AskUserQuestionName }
 func (t *AskUserQuestionTool) Description() string {
 	return `向用户发起提问并等待回答。适合需要用户拍板的决策点：方案选择、
 参数确认、授权确认等。调用后当前回合会挂起等待，用户回答后你将收到
-答案文本并继续执行；若用户超时未答，你会收到超时说明，应基于已有信息
-自行决策继续，而不是重复提问。
+答案文本并继续执行；若用户超时未答，本回合会立即结束，不会自动继续，
+需等待用户重新给出指示（如「继续」）才会接着执行。
 有明确候选时务必给出 options（界面会渲染为可点选的选项）。`
 }
 
@@ -66,7 +67,8 @@ func (t *AskUserQuestionTool) Schema() *tool.JSONSchema {
 
 // Execute 登记问题并阻塞等待答案。返回值三种路径：
 //   - 收到答案：输出 "用户回答：<answer>"，回合携带答案继续；
-//   - 超时：输出超时说明（成功结果，模型据此自行继续，不悬挂）；
+//   - 超时：输出超时说明并带 EndTurn 收尾标记，回合就此结束等待用户指示，
+//     不悬挂、不自主决策；
 //   - ctx 取消（回合被取消等）：返回错误，由运行时按取消语义收尾。
 func (t *AskUserQuestionTool) Execute(ctx context.Context, params map[string]interface{}) (*tool.ToolResult, error) {
 	asker := tool.QuestionAskerFromContext(ctx)
@@ -93,8 +95,9 @@ func (t *AskUserQuestionTool) Execute(ctx context.Context, params map[string]int
 		}
 		return &tool.ToolResult{
 			Success: true,
-			Output: fmt.Sprintf("用户在 %d 秒内未回答（超时）。请基于已有信息选择最合理的方案继续执行，"+
-				"并在结果中说明这是你的自主决策。", seconds),
+			EndTurn: true,
+			Output: fmt.Sprintf("用户在 %d 秒内未回答（超时）。本回合到此结束：不做自主决策、不执行任何后续操作，"+
+				"等待用户给出进一步指示（如回复「继续」）后再行动。", seconds),
 			Data: map[string]any{"timeout": true},
 		}, nil
 	}

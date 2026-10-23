@@ -122,9 +122,13 @@ func (rt *Runtime) executeSingleToolCall(ctx context.Context, call model.ToolCal
 	return exec
 }
 
-func (rt *Runtime) executeToolCalls(ctx context.Context, calls []model.ToolCall, tools *runtimeToolExecutor, chain *middleware.Chain, baseState *middleware.State, tracer Tracer, agentSpan SpanContext, req Request) error {
+// executeToolCalls 执行一批工具调用（只读并发段并行，其余串行）并把结果
+// 追加进历史。返回 endTurn 表示任一工具结果要求收尾（如提问超时需等待用户
+// 指示）：本批调用仍全部执行完毕（保证历史中 tool_use/tool_result 成对），
+// 由主循环据此不再进行下一轮模型迭代、干净结束回合。
+func (rt *Runtime) executeToolCalls(ctx context.Context, calls []model.ToolCall, tools *runtimeToolExecutor, chain *middleware.Chain, baseState *middleware.State, tracer Tracer, agentSpan SpanContext, req Request) (endTurn bool, err error) {
 	if len(calls) > 0 && tools == nil {
-		return errors.New("api: tool executor is nil")
+		return false, errors.New("api: tool executor is nil")
 	}
 	segments := partitionToolCallSegments(rt.registry, calls)
 
@@ -146,8 +150,9 @@ func (rt *Runtime) executeToolCalls(ctx context.Context, calls []model.ToolCall,
 			exec := rt.executeSingleToolCall(ctx, segment.calls[0].call, tools, chain, baseState, tracer, agentSpan, req.SessionID, req.RequestID)
 			recordMiddlewareErr(exec)
 			if exec.err != nil && (errors.Is(exec.err, context.Canceled) || errors.Is(exec.err, context.DeadlineExceeded)) {
-				return exec.err
+				return endTurn, exec.err
 			}
+			endTurn = endTurn || toolResultEndTurn(exec.result)
 			continue
 		}
 
@@ -207,15 +212,21 @@ func (rt *Runtime) executeToolCalls(ctx context.Context, calls []model.ToolCall,
 		}
 		for i, exec := range results {
 			recordMiddlewareErr(exec)
+			endTurn = endTurn || toolResultEndTurn(exec.result)
 			if !exec.started && (errors.Is(exec.err, context.Canceled) || errors.Is(exec.err, context.DeadlineExceeded)) {
 				continue
 			}
 			tools.appendCallResult(segment.calls[i].call, exec.result, exec.err)
 		}
 		if groupErr != nil {
-			return groupErr
+			return endTurn, groupErr
 		}
 	}
 
-	return firstMiddlewareErr
+	return endTurn, firstMiddlewareErr
+}
+
+// toolResultEndTurn 判断工具结果是否要求本批执行完毕后收尾回合。
+func toolResultEndTurn(res *tool.CallResult) bool {
+	return res != nil && res.Result != nil && res.Result.EndTurn
 }

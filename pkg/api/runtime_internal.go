@@ -325,13 +325,20 @@ func (rt *Runtime) runLoop(prep preparedRun, mdl model.Model, hookAdapter *runti
 			return last, err
 		}
 		if len(resp.Message.ToolCalls) > 0 {
-			if err := rt.executeToolCalls(ctx, resp.Message.ToolCalls, tools, chain, state, tracer, agentSpan, prep.normalized); err != nil {
+			endTurn, err := rt.executeToolCalls(ctx, resp.Message.ToolCalls, tools, chain, state, tracer, agentSpan, prep.normalized)
+			if err != nil {
 				runErr = err
 				return last, err
 			}
 			if stopErr != nil {
 				runErr = stopErr
 				return resp, stopErr
+			}
+			if endTurn {
+				// 工具请求收尾（如提问超时需等待用户指示）：不再进行下一轮
+				// 模型迭代，以当前响应干净结束回合。
+				runErr = nil
+				return resp, nil
 			}
 		}
 		if len(resp.Message.ToolCalls) == 0 {

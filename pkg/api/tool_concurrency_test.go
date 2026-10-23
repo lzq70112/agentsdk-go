@@ -278,7 +278,7 @@ func TestExecuteToolCallsDoesNotStartConcurrentSegmentWhenContextAlreadyCanceled
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := rt.executeToolCalls(
+	_, err := rt.executeToolCalls(
 		ctx,
 		[]model.ToolCall{
 			{ID: "r1", Name: "read1", Arguments: map[string]any{}},
@@ -312,7 +312,7 @@ func TestExecuteToolCallsReturnsErrorForNilExecutorWithConcurrentSegment(t *test
 	}
 	rt := &Runtime{registry: reg}
 
-	err := rt.executeToolCalls(
+	_, err := rt.executeToolCalls(
 		context.Background(),
 		[]model.ToolCall{{ID: "r1", Name: "read", Arguments: map[string]any{}}},
 		nil,
