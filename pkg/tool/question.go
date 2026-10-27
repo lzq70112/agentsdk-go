@@ -6,15 +6,13 @@ import (
 	"time"
 )
 
-// DefaultQuestionTimeout 是提问未显式指定超时时的默认等待时长。
-// IM 场景下悬挂等待会长期占用会话队列，必须有界。
-const DefaultQuestionTimeout = 5 * time.Minute
-
-// ErrQuestionTimeout 表示问题在超时时间内未获回答。工具据此生成"超时继续"
-// 的结果文本，让回合带着超时说明恢复而不是悬挂。
+// ErrQuestionTimeout 表示问题在显式限时的超时时间内未获回答。工具据此生成
+// "超时收尾"的结果文本，让回合带着超时说明结束而不是悬挂。未显式限时的
+// 提问永远等待，不会走到此错误。
 var ErrQuestionTimeout = errors.New("tool: question timeout")
 
-// Question 描述一次向用户的提问。Timeout <= 0 时由实现方取 DefaultQuestionTimeout。
+// Question 描述一次向用户的提问。Timeout <= 0 表示不限时，一直等待用户
+// 回答；仅显式限时（如 timeout_seconds）的提问会在超时后返回 ErrQuestionTimeout。
 type Question struct {
 	ID       string   // 实现方生成，宿主作答时凭此路由
 	Question string   // 问题文本

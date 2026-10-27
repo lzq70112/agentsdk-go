@@ -18,9 +18,9 @@ const AskUserQuestionName = "ask_user_question"
 const QuestionAskedEventType = "question_asked"
 
 // AskUserQuestionTool 让 agent 在需要用户决策时发起提问并挂起等待回答。
-// 提问即挂起：工具阻塞到收到答案或超时为止，期间不执行后续工具；收到答案
-// 后回合携带答案继续；超时则本回合立即收尾（EndTurn），等待用户给出进一步
-// 指示后再继续，不做自主决策。
+// 提问即挂起：工具阻塞到收到答案为止，期间不执行后续工具；收到答案后回合
+// 携带答案继续。提问不限时（除非调用方显式传 timeout_seconds），用户何时
+// 回答都有效，答后回合即继续。
 type AskUserQuestionTool struct{}
 
 // NewAskUserQuestionTool 创建提问工具。
@@ -35,8 +35,8 @@ func (t *AskUserQuestionTool) Name() string { return AskUserQuestionName }
 func (t *AskUserQuestionTool) Description() string {
 	return `向用户发起提问并等待回答。适合需要用户拍板的决策点：方案选择、
 参数确认、授权确认等。调用后当前回合会挂起等待，用户回答后你将收到
-答案文本并继续执行；若用户超时未答，本回合会立即结束，不会自动继续，
-需等待用户重新给出指示（如「继续」）才会接着执行。
+答案文本并继续执行。提问不限时：用户无论过多久回答都有效，无需催促
+或代为决策；仅当你显式传 timeout_seconds 时才会限时。
 有明确候选时务必给出 options（界面会渲染为可点选的选项）。`
 }
 
@@ -58,7 +58,7 @@ func (t *AskUserQuestionTool) Schema() *tool.JSONSchema {
 			},
 			"timeout_seconds": map[string]interface{}{
 				"type":        "integer",
-				"description": "等待回答的超时秒数（可选），默认 300。",
+				"description": "等待回答的超时秒数（可选）。不传则不限时，一直等待用户回答。",
 			},
 		},
 		Required: []string{"question"},
@@ -67,8 +67,8 @@ func (t *AskUserQuestionTool) Schema() *tool.JSONSchema {
 
 // Execute 登记问题并阻塞等待答案。返回值三种路径：
 //   - 收到答案：输出 "用户回答：<answer>"，回合携带答案继续；
-//   - 超时：输出超时说明并带 EndTurn 收尾标记，回合就此结束等待用户指示，
-//     不悬挂、不自主决策；
+//   - 超时（仅显式限时）：输出超时说明并带 EndTurn 收尾标记，回合就此结束
+//     等待用户指示，不悬挂、不自主决策；
 //   - ctx 取消（回合被取消等）：返回错误，由运行时按取消语义收尾。
 func (t *AskUserQuestionTool) Execute(ctx context.Context, params map[string]interface{}) (*tool.ToolResult, error) {
 	asker := tool.QuestionAskerFromContext(ctx)
@@ -89,10 +89,7 @@ func (t *AskUserQuestionTool) Execute(ctx context.Context, params map[string]int
 		Timeout:  timeout,
 	})
 	if errors.Is(err, tool.ErrQuestionTimeout) {
-		seconds := int(tool.DefaultQuestionTimeout / time.Second)
-		if timeout > 0 {
-			seconds = int(timeout / time.Second)
-		}
+		seconds := int(timeout / time.Second)
 		return &tool.ToolResult{
 			Success: true,
 			EndTurn: true,

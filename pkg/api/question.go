@@ -47,10 +47,6 @@ func (r *questionRegistry) register(sessionID string, q tool.Question) *pendingQ
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.seq++
-	timeout := q.Timeout
-	if timeout <= 0 {
-		timeout = tool.DefaultQuestionTimeout
-	}
 	p := &pendingQuestion{
 		info: QuestionInfo{
 			ID:        fmt.Sprintf("q-%d", r.seq),
@@ -58,7 +54,7 @@ func (r *questionRegistry) register(sessionID string, q tool.Question) *pendingQ
 			Question:  q.Question,
 			Options:   append([]string(nil), q.Options...),
 			AskedAt:   time.Now(),
-			Timeout:   timeout,
+			Timeout:   q.Timeout,
 		},
 		answered: make(chan string, 1),
 	}
@@ -120,12 +116,19 @@ func (a *questionAskerAdapter) Ask(ctx context.Context, q tool.Question) (string
 			SessionID: a.sessionID,
 		})
 	}
-	timer := time.NewTimer(pending.info.Timeout)
-	defer timer.Stop()
+	// 未显式限时的提问无限等待：nil channel 在 select 中永不就绪，无需起
+	// 定时器分支。仅显式限时（Timeout > 0）的提问超时摘除并报错。
+	var timer *time.Timer
+	var timeoutC <-chan time.Time
+	if pending.info.Timeout > 0 {
+		timer = time.NewTimer(pending.info.Timeout)
+		defer timer.Stop()
+		timeoutC = timer.C
+	}
 	select {
 	case answer := <-pending.answered:
 		return answer, nil
-	case <-timer.C:
+	case <-timeoutC:
 		a.registry.remove(pending.info.ID)
 		return "", tool.ErrQuestionTimeout
 	case <-ctx.Done():

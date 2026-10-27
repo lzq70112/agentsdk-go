@@ -60,7 +60,8 @@ func TestQuestionAskerAnswerDelivers(t *testing.T) {
 		return true
 	})
 	info, _ := rt_pendingSnapshot(registry, "s1")
-	if info.Options == nil || len(info.Options) != 2 || info.Timeout != tool.DefaultQuestionTimeout {
+	// 未显式限时的提问 Timeout 保持 0（无限等待），不再回填默认超时。
+	if info.Options == nil || len(info.Options) != 2 || info.Timeout != 0 {
 		t.Fatalf("待答快照不符: %+v", info)
 	}
 	if err := registry.answer(questionID, "B"); err != nil {
@@ -194,6 +195,59 @@ func TestRunStreamSuspendsOnQuestion(t *testing.T) {
 	if _, ok := rt.PendingQuestion(sessionID); ok {
 		t.Fatal("回合结束后不应再有 pending 问题")
 	}
+}
+
+// TestQuestionAskerNoTimeoutWaitsForever 固化不限时语义：未显式限时的提问
+// 永不超时——Ask 持续挂起等待答案，任何默认超时都不应摘除登记条目。废除
+// 提问超时后这是提问的默认行为（用户何时回答都有效）。
+func TestQuestionAskerNoTimeoutWaitsForever(t *testing.T) {
+	registry := newQuestionRegistry()
+	adapter := &questionAskerAdapter{registry: registry, sessionID: "s1"}
+	done := make(chan string, 1)
+	go func() {
+		answer, err := adapter.Ask(context.Background(), tool.Question{Question: "不设时限的问题"})
+		if err != nil {
+			t.Errorf("Ask: %v", err)
+			done <- ""
+			return
+		}
+		done <- answer
+	}()
+	// 先等登记出现（goroutine 尚未执行时 registry 为空），再开观察窗口。
+	waitFor(t, 3*time.Second, func() bool {
+		_, ok := registry.bySession("s1")
+		return ok
+	})
+	// 观察窗口远超原默认超时（5 分钟不可能在测试里等，取 300ms——旧默认
+	// 回填语义下该窗口内会摘除登记并返回超时错误）。
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if _, ok := registry.bySession("s1"); !ok {
+			t.Fatal("不限时提问在观察窗口内被摘除——不应超时")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err := registry.answer(askFirstID(t, registry, "s1"), "终于回答了"); err != nil {
+		t.Fatalf("answer: %v", err)
+	}
+	select {
+	case got := <-done:
+		if got != "终于回答了" {
+			t.Fatalf("答案不符: %q", got)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("答案未送达挂起方")
+	}
+}
+
+// askFirstID 返回会话当前待答问题 ID（测试辅助）。
+func askFirstID(t *testing.T, registry *questionRegistry, sessionID string) string {
+	t.Helper()
+	info, ok := registry.bySession(sessionID)
+	if !ok {
+		t.Fatal("无待答问题")
+	}
+	return info.ID
 }
 
 // TestRunStreamQuestionTimeoutEndsTurn 端到端固化超时路径：超时说明进入
