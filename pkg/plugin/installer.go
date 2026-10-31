@@ -117,13 +117,17 @@ func InstallFromMarketplace(root, mpName, pluginName string) (InstalledEntry, er
 		if entry.Name != pluginName {
 			continue
 		}
-		if isRemoteSource(entry.Source) {
-			return installZip(root, mpName, entry.Name, entry.Source, entry.SHA256, entry.StripRoot)
+		switch entry.Source.Kind {
+		case "git":
+			return installGitSource(root, mpName, entry)
+		case "zip":
+			return installZip(root, mpName, entry.Name, entry.Source.Raw, entry.SHA256, entry.StripRoot)
+		default: // path relative to the marketplace clone
+			src := filepath.Join(clone, filepath.FromSlash(entry.Source.Raw))
+			return installFromDir(root, mpName, entry.Name, src, PluginSource{
+				Type: "marketplace", URL: marketplaceURL(root, mpName), Path: entry.Source.Raw, SHA256: entry.SHA256,
+			})
 		}
-		src := filepath.Join(clone, filepath.FromSlash(entry.Source))
-		return installFromDir(root, mpName, entry.Name, src, PluginSource{
-			Type: "marketplace", URL: marketplaceURL(root, mpName), Path: entry.Source, SHA256: entry.SHA256,
-		})
 	}
 	return InstalledEntry{}, fmt.Errorf("plugin: marketplace %q has no plugin %q", mpName, pluginName)
 }
@@ -199,6 +203,62 @@ func installFromDir(root, mpName, name, src string, source PluginSource) (Instal
 		return InstalledEntry{}, err
 	}
 	return registerInstalled(root, mpName, dir, source, withVersion(version))
+}
+
+// installGitSource installs a marketplace plugin whose source is a git object
+// (git-subdir / github / git): shallow-clone the referenced repository and
+// copy the requested subdirectory into the cache. A commit SHA pin disables
+// the shallow clone and checks out that exact commit instead.
+func installGitSource(root, mpName string, entry MarketplacePlugin) (InstalledEntry, error) {
+	s := entry.Source
+	if strings.TrimSpace(s.URL) == "" {
+		return InstalledEntry{}, fmt.Errorf("plugin: %s: git source url is required", entry.Name)
+	}
+	tmp := filepath.Join(root, "cache", "tmp-"+hashShort(s.URL+"/"+entry.Name))
+	if err := os.MkdirAll(filepath.Dir(tmp), 0o755); err != nil {
+		return InstalledEntry{}, fmt.Errorf("plugin: mkdir cache: %w", err)
+	}
+	defer os.RemoveAll(tmp)
+
+	args := []string{"clone"}
+	ref := strings.TrimSpace(s.Ref)
+	pin := strings.TrimSpace(s.SHA)
+	if pin == "" && ref != "" && isCommitSHA(ref) {
+		pin, ref = ref, "" // some marketplaces put the commit hash in "ref"
+	}
+	switch {
+	case pin != "":
+		args = append(args, "--filter=blob:none") // full history, blobs on demand: cheap exact checkout
+	case ref != "":
+		args = append(args, "--depth", "1", "--branch", ref)
+	default:
+		args = append(args, "--depth", "1")
+	}
+	args = append(args, s.URL, tmp)
+	if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+		return InstalledEntry{}, fmt.Errorf("plugin: git clone %s: %w: %s", s.URL, err, strings.TrimSpace(string(out)))
+	}
+	if pin != "" {
+		if out, err := exec.Command("git", "-C", tmp, "checkout", pin).CombinedOutput(); err != nil {
+			return InstalledEntry{}, fmt.Errorf("plugin: checkout %s: %w: %s", pin, err, strings.TrimSpace(string(out)))
+		}
+	}
+
+	src := tmp
+	if s.Path != "" {
+		clean := filepath.Clean(filepath.FromSlash(s.Path))
+		if hasParentRef(clean) || filepath.IsAbs(clean) {
+			return InstalledEntry{}, fmt.Errorf("plugin: %s: source path %q escapes repository", entry.Name, s.Path)
+		}
+		src = filepath.Join(tmp, clean)
+	}
+	source := PluginSource{
+		Type:   "marketplace",
+		URL:    marketplaceURL(root, mpName),
+		Path:   s.URL + "::" + s.Path,
+		SHA256: entry.SHA256,
+	}
+	return installFromDir(root, mpName, entry.Name, src, source)
 }
 
 // registerInstalled validates the materialized plugin, probes its version and
@@ -294,6 +354,22 @@ func marketplaceURL(root, mpName string) string {
 func isRemoteSource(source string) bool {
 	s := strings.TrimSpace(source)
 	return strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")
+}
+
+// isCommitSHA reports whether ref looks like a (possibly abbreviated) commit
+// hash rather than a branch or tag name.
+func isCommitSHA(s string) bool {
+	if len(s) < 7 || len(s) > 40 {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= '0' && r <= '9', r >= 'a' && r <= 'f', r >= 'A' && r <= 'F':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func provisionedName(url string) string {

@@ -61,14 +61,69 @@ type installedRegistry struct {
 	Plugins []InstalledEntry `json:"plugins"`
 }
 
+// MarketplaceSource is the "source" field of a marketplace plugin entry. The
+// .claude-plugin standard allows two shapes: a plain string (a path relative
+// to the marketplace clone, or an http(s) zip archive URL) or an object
+// pointing at another git repository (git-subdir / github / git).
+type MarketplaceSource struct {
+	Raw  string // original string value when the field was a plain string
+	Kind string // path | zip | git
+	URL  string // git shape: repository URL
+	Path string // git shape: subdirectory inside the repo ("" = repo root)
+	Ref  string // git shape: optional branch/tag
+	SHA  string // git shape: optional commit pin
+}
+
+// UnmarshalJSON accepts both the string and the object form. Object forms
+// other than git-subdir/github/git fail with an explicit error so a bad
+// manifest surfaces its real problem instead of silently degrading.
+func (s *MarketplaceSource) UnmarshalJSON(data []byte) error {
+	var str string
+	if err := json.Unmarshal(data, &str); err == nil {
+		kind := "path"
+		if isRemoteSource(str) {
+			kind = "zip"
+		}
+		*s = MarketplaceSource{Raw: str, Kind: kind}
+		return nil
+	}
+	var obj struct {
+		Source string `json:"source"`
+		URL    string `json:"url"`
+		Repo   string `json:"repo"`
+		Path   string `json:"path"`
+		Ref    string `json:"ref"`
+		SHA    string `json:"sha"`
+	}
+	if err := json.Unmarshal(data, &obj); err != nil {
+		return fmt.Errorf("plugin: marketplace source: %w", err)
+	}
+	switch obj.Source {
+	case "git-subdir", "git":
+		*s = MarketplaceSource{Kind: "git", URL: obj.URL, Path: obj.Path, Ref: obj.Ref, SHA: obj.SHA}
+	case "github":
+		if obj.Repo == "" {
+			return fmt.Errorf("plugin: marketplace source github: repo is required")
+		}
+		url := obj.URL
+		if url == "" {
+			url = "https://github.com/" + strings.TrimSuffix(obj.Repo, ".git") + ".git"
+		}
+		*s = MarketplaceSource{Kind: "git", URL: url, Path: obj.Path, Ref: obj.Ref, SHA: obj.SHA}
+	default:
+		return fmt.Errorf("plugin: unsupported marketplace source type %q (supported: string path, string zip url, git-subdir, github, git)", obj.Source)
+	}
+	return nil
+}
+
 // MarketplacePlugin is one plugin entry inside a marketplace manifest.
 type MarketplacePlugin struct {
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	Version     string `json:"version,omitempty"`
-	Source      string `json:"source,omitempty"` // path relative to marketplace root, or URL
-	SHA256      string `json:"sha256,omitempty"`
-	StripRoot   bool   `json:"stripRoot,omitempty"`
+	Name        string            `json:"name"`
+	Description string            `json:"description,omitempty"`
+	Version     string            `json:"version,omitempty"`
+	Source      MarketplaceSource `json:"source,omitempty"` // relative path, zip URL or git object
+	SHA256      string            `json:"sha256,omitempty"`
+	StripRoot   bool              `json:"stripRoot,omitempty"`
 }
 
 // MarketplaceManifest mirrors .claude-plugin/marketplace.json.
