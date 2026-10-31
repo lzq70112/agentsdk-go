@@ -13,6 +13,7 @@ import (
 	"github.com/lzq70112/agentsdk-go/pkg/config"
 	hooks "github.com/lzq70112/agentsdk-go/pkg/hooks"
 	"github.com/lzq70112/agentsdk-go/pkg/message"
+	"github.com/lzq70112/agentsdk-go/pkg/plugin"
 	"github.com/lzq70112/agentsdk-go/pkg/runtime/skills"
 	"github.com/lzq70112/agentsdk-go/pkg/sandbox"
 	"github.com/lzq70112/agentsdk-go/pkg/tool"
@@ -74,6 +75,9 @@ type Runtime struct {
 	crons     *cronEngine
 	questions *questionRegistry
 	memory    *memoryRuntime
+	// commands 是插件贡献的斜杠命令（名称排序，跨插件先到先得），只读快照；
+	// 触发时机由宿主决定（SDK 不做 / 消息拦截）。
+	commands []plugin.Command
 
 	mu sync.RWMutex
 
@@ -142,6 +146,14 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	}
 	opts.Model = mdl
 
+	// 插件解析：手动注入 + PluginsDir 磁盘发现（DisabledPlugins 整体排除），
+	// 单个插件加载失败只告警不阻断（对齐 skills/subagents loader 行为）。
+	plugins, pluginErrs := resolvePlugins(opts)
+	for _, err := range pluginErrs {
+		runtimeLogger.warnf("plugin loader warning: %v", err)
+	}
+	opts.plugins = plugins
+
 	sbox, sbRoot := buildSandboxManager(opts, settings)
 	builder.AddSection(SystemPromptSectionEnvironment, buildEnvironmentSection(opts.ProjectRoot, sbRoot), SystemPromptPriorityEnvironment)
 
@@ -169,7 +181,7 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	mcpServers := collectMCPServers(settings, opts.MCPServers, opts.DisabledMCP)
+	mcpServers := collectMCPServers(settings, opts.MCPServers, opts.DisabledMCP, pluginMCPServers(plugins))
 	if listing := buildMCPInstructionsListing(mcpServers); listing != "" {
 		builder.AddSection(SystemPromptSectionMCPInstructions, listing, SystemPromptPriorityMCPInstructions)
 	}
@@ -215,6 +227,7 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		compactor: compactor,
 		deferred:  newDeferredToolState(registry),
 		reminders: newReminderEngine(),
+		commands:  pluginCommands(plugins),
 	}
 	if subagent != nil {
 		subagent.bindRuntime(rt)

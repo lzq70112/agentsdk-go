@@ -18,12 +18,15 @@ type mcpServer struct {
 	ToolTimeoutSeconds int
 }
 
-// collectMCPServers merges explicit API inputs, settings.json entries, and
-// managed allow/deny policies. disabled lists MCP server config names
-// (case-insensitive) that must not be connected; the list is inherited by
-// sub-runtimes so admin disable decisions stay effective there.
-func collectMCPServers(settings *config.Settings, explicit, disabled []string) []mcpServer {
+// collectMCPServers merges explicit API inputs, settings.json entries, plugin
+// contributions and managed allow/deny policies. disabled lists MCP server
+// config names (case-insensitive) that must not be connected; the list is
+// inherited by sub-runtimes so admin disable decisions stay effective there.
+// pluginServers keyed by server name lose to same-name settings entries
+// (settings wins) but go through the same disabled/policy checks.
+func collectMCPServers(settings *config.Settings, explicit, disabled []string, pluginServers map[string]config.MCPServerConfig) []mcpServer {
 	seen := map[string]struct{}{}
+	named := map[string]struct{}{} // 已注册 server 名（小写）：插件来源遇同名让位
 	var servers []mcpServer
 	allowRules := managedAllowRules(settings)
 	denyRules := managedDenyRules(settings)
@@ -48,6 +51,9 @@ func collectMCPServers(settings *config.Settings, explicit, disabled []string) [
 		seen[dedupKey] = struct{}{}
 		server.Name = strings.TrimSpace(server.Name)
 		server.URL = strings.TrimSpace(server.URL)
+		if server.Name != "" {
+			named[strings.ToLower(server.Name)] = struct{}{}
+		}
 		servers = append(servers, server)
 	}
 
@@ -57,22 +63,33 @@ func collectMCPServers(settings *config.Settings, explicit, disabled []string) [
 
 	if settings != nil && settings.MCP != nil {
 		for name, cfg := range settings.MCP.Servers {
-			// Convert MCPServerConfig to spec string
-			spec := mcpConfigToSpec(cfg)
-			add(mcpServer{
-				Name:               name,
-				Spec:               spec,
-				URL:                cfg.URL,
-				Headers:            cfg.Headers,
-				Env:                cfg.Env,
-				TimeoutSeconds:     cfg.TimeoutSeconds,
-				EnabledTools:       cfg.EnabledTools,
-				DisabledTools:      cfg.DisabledTools,
-				ToolTimeoutSeconds: cfg.ToolTimeoutSeconds,
-			})
+			add(mcpServerFromConfig(name, cfg))
 		}
 	}
+
+	for name, cfg := range pluginServers {
+		if _, ok := named[strings.ToLower(strings.TrimSpace(name))]; ok {
+			continue // settings 优先：同名 server 由 settings 定义胜出
+		}
+		add(mcpServerFromConfig(name, cfg))
+	}
 	return servers
+}
+
+// mcpServerFromConfig converts a config.MCPServerConfig into the internal
+// mcpServer shape shared by the settings and plugin sources.
+func mcpServerFromConfig(name string, cfg config.MCPServerConfig) mcpServer {
+	return mcpServer{
+		Name:               name,
+		Spec:               mcpConfigToSpec(cfg),
+		URL:                cfg.URL,
+		Headers:            cfg.Headers,
+		Env:                cfg.Env,
+		TimeoutSeconds:     cfg.TimeoutSeconds,
+		EnabledTools:       cfg.EnabledTools,
+		DisabledTools:      cfg.DisabledTools,
+		ToolTimeoutSeconds: cfg.ToolTimeoutSeconds,
+	}
 }
 
 func managedAllowRules(s *config.Settings) []config.MCPServerRule {

@@ -17,6 +17,7 @@ import (
 	"github.com/lzq70112/agentsdk-go/pkg/message"
 	"github.com/lzq70112/agentsdk-go/pkg/middleware"
 	"github.com/lzq70112/agentsdk-go/pkg/model"
+	"github.com/lzq70112/agentsdk-go/pkg/plugin"
 	"github.com/lzq70112/agentsdk-go/pkg/runtime/skills"
 	"github.com/lzq70112/agentsdk-go/pkg/runtime/subagents"
 	"github.com/lzq70112/agentsdk-go/pkg/sandbox"
@@ -248,6 +249,18 @@ type Options struct {
 	// runtime。运行时可通过 Runtime.SetDisabledMCP 调整。
 	DisabledMCP []string
 
+	// PluginsDir 指向插件注册表根目录（installed_plugins.json 所在）：非空则
+	// New() 时经 plugin.Discover 自动发现已安装且启用的插件，四类资源
+	// （skills/agents/commands/MCP）并入运行时；空串=不自动发现。宿主典型值
+	// ~/.agents/plugins。变更经宿主重启进程生效。
+	PluginsDir string
+	// Plugins 宿主手动注入的插件（自管加载时机），与 PluginsDir 的发现结果合并，
+	// 插件名冲突时手动注入优先。注入后视为只读，由 SDK 在 New() 时消费。
+	Plugins []plugin.Plugin
+	// DisabledPlugins 列出整体不加载的插件名（大小写不敏感；禁用粒度是整个
+	// 插件而非单资源），随 buildSubOptions 经 BaseOptions 继承给子 runtime。
+	DisabledPlugins []string
+
 	TypedHooks             []hooks.ShellHook
 	HookMiddleware         []hooks.Middleware
 	HookTimeout            time.Duration
@@ -281,6 +294,9 @@ type Options struct {
 	skReg            *skills.Registry
 	subMgr           *subagents.Manager
 	tracer           Tracer
+	// plugins 是 New() 时 resolvePlugins 的解析结果（手动注入 + 磁盘发现，
+	// 已应用 DisabledPlugins），供 skills/agents/MCP/commands 四路合并消费。
+	plugins []plugin.Plugin
 	// subagentDisabled 是 SDK 内部字段：为 true 时该 runtime 内的 subagent tool
 	// 退化为"调用即拒绝"的 no-op（Name/Description/Schema 不变以命中 prefix cache），
 	// 用于在子 runtime 中硬阻断孙 agent 派生。仅 buildSubOptions 会设置它。
@@ -496,6 +512,13 @@ func (o Options) frozen() Options {
 	}
 	if len(o.DisabledMCP) > 0 {
 		o.DisabledMCP = append([]string(nil), o.DisabledMCP...)
+	}
+	if len(o.DisabledPlugins) > 0 {
+		o.DisabledPlugins = append([]string(nil), o.DisabledPlugins...)
+	}
+	if len(o.Plugins) > 0 {
+		// 浅克隆防宿主后续 append/重排污染；条目内资源在 New() 合并时逐值复制。
+		o.Plugins = append([]plugin.Plugin(nil), o.Plugins...)
 	}
 	if len(o.TypedHooks) > 0 {
 		hooks := make([]hooks.ShellHook, len(o.TypedHooks))

@@ -22,7 +22,7 @@ func TestCollectMCPServersMergesSourcesAndDedups(t *testing.T) {
 			},
 		},
 	}
-	servers := collectMCPServers(settings, []string{"http://settings.example", "http://other.example"}, nil)
+	servers := collectMCPServers(settings, []string{"http://settings.example", "http://other.example"}, nil, nil)
 	if len(servers) != 2 {
 		t.Fatalf("expected deduped two servers, got %d: %+v", len(servers), servers)
 	}
@@ -45,7 +45,7 @@ func TestCollectMCPServersPreservesSettingsOptions(t *testing.T) {
 			},
 		},
 	}
-	servers := collectMCPServers(settings, nil, nil)
+	servers := collectMCPServers(settings, nil, nil, nil)
 	if len(servers) != 1 {
 		t.Fatalf("expected one server, got %d: %+v", len(servers), servers)
 	}
@@ -91,7 +91,7 @@ func TestCollectMCPServersStdioSpec(t *testing.T) {
 			},
 		},
 	}
-	servers := collectMCPServers(settings, nil, nil)
+	servers := collectMCPServers(settings, nil, nil, nil)
 	if len(servers) != 1 {
 		t.Fatalf("expected one server, got %d", len(servers))
 	}
@@ -123,7 +123,7 @@ func TestCollectMCPServersSkipsDisabled(t *testing.T) {
 		},
 	}
 	// 大小写不敏感匹配配置名；显式 spec（无配置名）不受名单影响。
-	servers := collectMCPServers(settings, []string{"http://explicit.example"}, []string{"Context7 ", "plain-extra"})
+	servers := collectMCPServers(settings, []string{"http://explicit.example"}, []string{"Context7 ", "plain-extra"}, nil)
 	if len(servers) != 2 {
 		t.Fatalf("expected disabled servers skipped, got %d: %+v", len(servers), servers)
 	}

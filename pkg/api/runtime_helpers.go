@@ -214,7 +214,16 @@ func buildSkillsRegistry(opts Options) (*skills.Registry, []error) {
 		EmbedFS:     opts.EmbedFS,
 	})
 
-	merged := mergeSkillRegistrations(fsRegs, opts.Skills, &errs)
+	// 插件 skills 并入文件系统来源：优先级 项目 .agents/skills < 插件 < 宿主
+	// 显式 Options.Skills（merge 函数后到者优先，宿主优先对齐 comate 语义）。
+	fromFS := fsRegs
+	if pluginRegs := pluginSkillRegistrations(opts.plugins); len(pluginRegs) > 0 {
+		fromFS = make([]skills.SkillRegistration, 0, len(fsRegs)+len(pluginRegs))
+		fromFS = append(fromFS, fsRegs...)
+		fromFS = append(fromFS, pluginRegs...)
+	}
+
+	merged := mergeSkillRegistrations(fromFS, opts.Skills, &errs)
 
 	disabled := disabledNameSet(opts.DisabledSkills)
 	reg := skills.NewRegistry()
@@ -298,7 +307,19 @@ func buildSubagentsManager(opts Options) (*subagents.Manager, []error) {
 		FS:          loader.fs,
 	})
 
-	merged := mergeSubagentRegistrations(opts.Subagents, projectRegs, &errs)
+	// 插件 agents 前插到宿主手动清单之前：merge 函数后到者优先，因此优先级
+	// 插件 < 宿主显式 Options.Subagents < 项目 .agents/agents，宿主定义始终
+	// 压过插件（对齐 comate 语义）。
+	manual := opts.Subagents
+	if pluginRegs := pluginAgentRegistrations(opts.plugins); len(pluginRegs) > 0 {
+		manual = make([]SubagentRegistration, 0, len(pluginRegs)+len(opts.Subagents))
+		for _, reg := range pluginRegs {
+			manual = append(manual, SubagentRegistration{Definition: reg.Definition, Handler: reg.Handler})
+		}
+		manual = append(manual, opts.Subagents...)
+	}
+
+	merged := mergeSubagentRegistrations(manual, projectRegs, &errs)
 	if len(merged) == 0 {
 		return nil, errs
 	}
