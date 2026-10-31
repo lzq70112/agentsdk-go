@@ -51,6 +51,9 @@ type runtimeToolExecutor struct {
 	sessionID string
 	deferred  *deferredToolState
 	questions *questionRegistry
+	// memoryWrites 是 auto memory 的防双写记账（Memory 禁用时为 nil）：
+	// write/edit 成功落记忆目录时置位，回合结束抽取时消费。
+	memoryWrites *memoryRuntime
 }
 
 func (t *runtimeToolExecutor) withoutHistory() *runtimeToolExecutor {
@@ -205,6 +208,9 @@ func (t *runtimeToolExecutor) execute(ctx context.Context, call model.ToolCall, 
 	result, err := t.executor.Execute(ctx, callSpec)
 	if err != nil {
 		runtimeLogger.warnf("[api:toolExec] tool=%s id=%s session=%s failed: %v", call.Name, call.ID, t.sessionID, err)
+	} else {
+		// 防双写记账：主对话成功写入记忆目录 → 跳过本轮后台抽取。
+		t.memoryWrites.noteSuccessfulMemoryWrite(call.Name, call.Arguments)
 	}
 	content := toolCallResultContent(result, err)
 

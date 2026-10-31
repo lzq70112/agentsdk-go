@@ -13,6 +13,7 @@ const (
 	SystemPromptSectionSubagents       = "subagents"
 	SystemPromptSectionTools           = "tools"
 	SystemPromptSectionMemory          = "memory"
+	SystemPromptSectionMemoryUsage     = "memory-usage"
 	SystemPromptSectionMCPInstructions = "mcp-instructions"
 
 	SystemPromptPriorityIdentity        = 0
@@ -22,6 +23,7 @@ const (
 	SystemPromptPrioritySubagents       = 25
 	SystemPromptPriorityTools           = 30
 	SystemPromptPriorityMemory          = 40
+	SystemPromptPriorityMemoryUsage     = 45
 	SystemPromptPriorityMCPInstructions = 50
 )
 

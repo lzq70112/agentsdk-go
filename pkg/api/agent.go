@@ -73,6 +73,7 @@ type Runtime struct {
 	reminders *reminderEngine
 	crons     *cronEngine
 	questions *questionRegistry
+	memory    *memoryRuntime
 
 	mu sync.RWMutex
 
@@ -121,6 +122,11 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		runtimeLogger.warnf("agents.md loader warning: %v", err)
 	} else if strings.TrimSpace(memory) != "" {
 		builder.AddSection(SystemPromptSectionMemory, fmt.Sprintf("## Memory\n\n%s", strings.TrimSpace(memory)), SystemPromptPriorityMemory)
+	}
+
+	// auto memory 常驻提示（Memory 禁用时整段不注入）。
+	if opts.Memory != nil && opts.Memory.enabled() && strings.TrimSpace(opts.Memory.Dir) != "" {
+		builder.AddSection(SystemPromptSectionMemoryUsage, renderMemoryUsagePrompt(opts.Memory.Dir), SystemPromptPriorityMemoryUsage)
 	}
 
 	settings, err := loadSettings(opts)
@@ -221,6 +227,12 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		rt.crons.attachStore(newCronStore(opts.ProjectRoot))
 	}
 	rt.questions = newQuestionRegistry()
+	// auto memory 装配：确保记忆目录存在并构造写守卫（Memory 禁用时为 nil）。
+	rt.memory = newMemoryRuntime(opts, sbRoot)
+	if rt.memory != nil {
+		// 后台抽取器：回合正常完成后经 maybeStartMemoryExtraction 触发。
+		rt.memory.initExtractor(rt)
+	}
 	return rt, nil
 }
 
@@ -297,6 +309,8 @@ func (rt *Runtime) Run(ctx context.Context, req Request) (*Response, error) {
 	if err != nil {
 		return nil, err
 	}
+	// 回合正常完成：触发后台记忆抽取（canceled/error 路径不经过此处）。
+	rt.maybeStartMemoryExtraction(sessionID, prep.prompt)
 	return rt.buildResponse(prep, result), nil
 }
 
@@ -397,6 +411,8 @@ func (rt *Runtime) RunStream(ctx context.Context, req Request) (<-chan StreamEve
 			out <- StreamEvent{Type: EventError, Output: runErr.Error(), IsError: &isErr}
 			return
 		}
+		// 回合正常完成：触发后台记忆抽取（canceled/error 路径不经过此处）。
+		rt.maybeStartMemoryExtraction(req.SessionID, prep.prompt)
 		rt.buildResponse(prep, result)
 	}()
 	return out, nil
@@ -425,6 +441,9 @@ func (rt *Runtime) Close() error {
 		rt.subagent.clearSubSessions()
 		// 清空后台任务注册表：在 shutdownAsync 等待全部在途任务退出之后释放。
 		rt.subagent.clearTasks()
+
+		// 停掉 auto memory 的后台工作（异步召回预取 + 抽取子代理）并等待退出。
+		rt.memory.shutdown()
 
 		var err error
 		if rt.histories != nil {

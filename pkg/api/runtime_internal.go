@@ -115,6 +115,14 @@ func (rt *Runtime) runAgentWithMiddleware(prep preparedRun, extras ...middleware
 		recorder:          prep.recorder,
 		disableSafetyHook: rt.opts.DisableSafetyHook,
 	}
+	switch {
+	case rt.memory != nil:
+		hookAdapter.memoryGuard = rt.memory.guard
+	case rt.opts.memoryExtractGuard != nil:
+		// 抽取子代理：Memory 整链路禁用（防递归），但 write/edit 需要抽取
+		// 专用的严格守卫（只准落记忆目录内主题 .md）。
+		hookAdapter.memoryGuard = rt.opts.memoryExtractGuard
+	}
 
 	toolExec := &runtimeToolExecutor{
 		executor:  rt.executor,
@@ -126,6 +134,10 @@ func (rt *Runtime) runAgentWithMiddleware(prep preparedRun, extras ...middleware
 		sessionID: prep.normalized.SessionID,
 		deferred:  rt.deferred,
 		questions: rt.questions,
+	}
+	if rt.memory != nil {
+		// 主 runtime 才记账防双写标志；抽取子代理的 Memory 为 nil 不记账。
+		toolExec.memoryWrites = rt.memory
 	}
 
 	chainItems := make([]middleware.Middleware, 0, len(rt.opts.Middleware)+len(extras))
@@ -176,6 +188,9 @@ func (rt *Runtime) runLoop(prep preparedRun, mdl model.Model, hookAdapter *runti
 		}
 		prep.history.Append(userMsg)
 		rt.observeReminderTick(prep.normalized.SessionID, ClockUserTurns)
+		// auto memory 召回：用户消息落盘后启动（keyword 同步注入；llm 异步
+		// 预取，消费点在本回合首次模型调用前）。
+		rt.beginMemoryRecall(&prep)
 	}
 
 	state := &middleware.State{Values: map[string]any{}}
@@ -222,6 +237,11 @@ func (rt *Runtime) runLoop(prep preparedRun, mdl model.Model, hookAdapter *runti
 	stopReinjections := 0
 	for iteration := 0; ; iteration++ {
 		iterations = iteration + 1
+		if iteration == 0 {
+			// llm 召回预取的消费点：本回合首次模型调用（含压缩调用）之前
+			// try-consume，未就绪则本回合放弃注入。
+			rt.consumeMemoryRecall(&prep)
+		}
 		if err := ctx.Err(); err != nil {
 			runErr = err
 			return last, err

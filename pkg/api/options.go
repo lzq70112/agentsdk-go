@@ -73,6 +73,65 @@ type StreamStallConfig struct {
 	FallbackEnabled bool          `json:"fallback_enabled"`
 }
 
+// MemoryOptions 配置 auto memory 子系统（spec docs/spec/2026-10-31-auto-memory.md）。
+type MemoryOptions struct {
+	// Enabled 三态开关：nil（默认）= 启用；显式 false = 整链路禁用（常驻提示、
+	// 召回、写守卫、沙箱放行均无痕）。bool 无法区分"未设置"与"显式禁用"，
+	// 沿用 RulesEnabled 的指针三态先例。
+	Enabled *bool
+	// Dir 记忆目录；空 = ~/.agents/memory/<bucket>（bucket 由 ProjectRoot
+	// 绝对路径规范化派生）。非空时整体覆盖默认派生。
+	Dir string
+	// ExtraDirs 只读召回源（宿主挂载的用户手写知识目录）：只参与召回，
+	// 永不附过期警示，写入一律拒绝。
+	ExtraDirs []string
+	// SelectorTier 是二期 LLM 选择器的模型档位；一期 keyword 选择器不使用。
+	SelectorTier ModelTier
+
+	// autoDerived 标记本配置由 withDefaults 从 nil 派生（宿主未配置 Memory）。
+	// 默认派生配置只保留一期语义（常驻提示/召回/写守卫），后台抽取不启用：
+	// 抽取有子代理模型调用与记忆目录写盘副作用，不应在宿主从未提及 Memory
+	// 时静默发生（spec §8 偏离点，见 maybeStartMemoryExtraction）。
+	autoDerived bool
+}
+
+// enabled 报告 memory 是否启用：nil 配置 / nil 开关 / 显式 true 均视为启用。
+func (m *MemoryOptions) enabled() bool {
+	return m == nil || m.Enabled == nil || *m.Enabled
+}
+
+func (m *MemoryOptions) withDefaults(projectRoot string) *MemoryOptions {
+	var cfg MemoryOptions
+	if m != nil {
+		cfg = *m
+	}
+	if cfg.SelectorTier == "" {
+		cfg.SelectorTier = ModelTierLow
+	}
+	if !cfg.enabled() {
+		return &cfg
+	}
+	dir := strings.TrimSpace(cfg.Dir)
+	if dir == "" {
+		// ProjectRoot 为空时 memory 视为禁用（没有可靠的桶名可派生）。
+		if strings.TrimSpace(projectRoot) == "" {
+			cfg.Enabled = boolValuePtr(false)
+			return &cfg
+		}
+		home, ok := memoryHomeDir()
+		if !ok {
+			cfg.Enabled = boolValuePtr(false)
+			return &cfg
+		}
+		dir = defaultMemoryDir(home, projectRoot)
+	}
+	if abs, err := filepathAbs(dir); err == nil {
+		dir = abs
+	}
+	cfg.Dir = dir
+	return &cfg
+}
+
 func (c StreamStallConfig) withDefaults() StreamStallConfig {
 	cfg := c
 	if cfg.Timeout <= 0 {
@@ -205,10 +264,14 @@ type Options struct {
 	// 为 nil 时不回调。
 	ScheduledFireHandler func(CronTask)
 
-	Skills           []SkillRegistration
-	Subagents        []SubagentRegistration
-	AgentTypes       []AgentType
-	Sandbox          SandboxOptions
+	Skills     []SkillRegistration
+	Subagents  []SubagentRegistration
+	AgentTypes []AgentType
+	Sandbox    SandboxOptions
+	// Memory 配置 auto memory 子系统；nil = 默认启用并派生默认目录（仅一期
+	// 语义：常驻提示/召回/写守卫；后台抽取需宿主显式配置 Memory 才启用）。
+	// 见 MemoryOptions 与 docs/spec/2026-10-31-auto-memory.md。
+	Memory           *MemoryOptions
 	AutoCompact      CompactConfig
 	OTEL             OTELConfig
 	LogDir           string // directory for runtime logs; empty disables file logging (typical: <ProjectRoot>/.agents/logs)
@@ -222,6 +285,9 @@ type Options struct {
 	// 退化为"调用即拒绝"的 no-op（Name/Description/Schema 不变以命中 prefix cache），
 	// 用于在子 runtime 中硬阻断孙 agent 派生。仅 buildSubOptions 会设置它。
 	subagentDisabled bool
+	// memoryExtractGuard 是抽取子代理专用的严格写守卫（spec §7.1）：write/edit
+	// 只允许落记忆目录内的主题 .md。仅 memoryExtractor.buildSubOptions 会设置。
+	memoryExtractGuard *memoryWriteGuard
 }
 
 func DefaultSubagentDefinitions() []subagents.Definition {
@@ -229,21 +295,21 @@ func DefaultSubagentDefinitions() []subagents.Definition {
 }
 
 type Request struct {
-	Prompt             string
-	ContentBlocks      []model.ContentBlock // Multimodal content; when non-empty, used alongside Prompt
-	Mode               ModeContext
-	SessionID          string
-	RequestID          string    `json:"request_id,omitempty"` // Auto-generated UUID or user-provided
-	Model              ModelTier // Optional: override model tier for this request
-	EnablePromptCache  *bool     // Optional: enable prompt caching (nil uses global default)
-	Traits             []string
-	Tags               map[string]string
-	Channels           []string
-	Metadata           map[string]any
+	Prompt            string
+	ContentBlocks     []model.ContentBlock // Multimodal content; when non-empty, used alongside Prompt
+	Mode              ModeContext
+	SessionID         string
+	RequestID         string    `json:"request_id,omitempty"` // Auto-generated UUID or user-provided
+	Model             ModelTier // Optional: override model tier for this request
+	EnablePromptCache *bool     // Optional: enable prompt caching (nil uses global default)
+	Traits            []string
+	Tags              map[string]string
+	Channels          []string
+	Metadata          map[string]any
 	// UserMetadata 随本回合的 user 消息写入会话历史 Metadata（与时间戳等
 	// 框架键共存，键冲突时以宿主为准），随历史序列化自动落盘；不参与子任务
 	// dispatch 元数据（那是 Metadata 的用途）。
-	UserMetadata map[string]any
+	UserMetadata       map[string]any
 	TeamMembers        []subagents.TeamMember
 	TeamMaxAgents      int
 	TeamMaxConcurrency int
@@ -325,6 +391,29 @@ func WithOTEL(config OTELConfig) func(*Options) {
 	}
 }
 
+// WithMemoryOptions 配置 auto memory 子系统。Enabled 字段为三态（nil=启用），
+// 需要禁用时用 WithMemoryDisabled 或显式 Enabled: boolPtr(false)。
+func WithMemoryOptions(cfg MemoryOptions) func(*Options) {
+	return func(o *Options) {
+		clone := cfg
+		o.Memory = &clone
+	}
+}
+
+// WithMemoryDisabled 关闭 auto memory：整链路无痕（不注入常驻提示、不召回、
+// 不拦写、不放宽沙箱）。
+func WithMemoryDisabled() func(*Options) {
+	return func(o *Options) {
+		cfg := MemoryOptions{}
+		if o.Memory != nil {
+			cfg = *o.Memory
+		}
+		enabled := false
+		cfg.Enabled = &enabled
+		o.Memory = &cfg
+	}
+}
+
 func (o Options) withDefaults() Options {
 	if o.EntryPoint == "" {
 		o.EntryPoint = defaultEntrypoint
@@ -365,6 +454,14 @@ func (o Options) withDefaults() Options {
 	}
 	o.StreamStall = o.StreamStall.withDefaults()
 	o.MaxTokensEscalation = o.MaxTokensEscalation.withDefaults()
+	if o.Memory == nil {
+		// 宿主未配置 Memory：派生默认目录保持一期"默认启用"语义，但标记
+		// autoDerived——后台抽取不在默认派生配置上运行（见 MemoryOptions）。
+		o.Memory = (&MemoryOptions{}).withDefaults(o.ProjectRoot)
+		o.Memory.autoDerived = true
+	} else {
+		o.Memory = o.Memory.withDefaults(o.ProjectRoot)
+	}
 	return o
 }
 
@@ -453,6 +550,12 @@ func (o Options) frozen() Options {
 	}
 
 	o.Sandbox = freezeSandboxOptions(o.Sandbox)
+
+	if o.Memory != nil {
+		memory := *o.Memory
+		memory.ExtraDirs = append([]string(nil), o.Memory.ExtraDirs...)
+		o.Memory = &memory
+	}
 
 	if len(o.ModelPool) > 0 {
 		o.ModelPool = maps.Clone(o.ModelPool)
@@ -641,6 +744,9 @@ type runtimeHookAdapter struct {
 	recorder HookRecorder
 
 	disableSafetyHook bool
+	// memoryGuard 是 auto memory 的内部写守卫（Memory 禁用时为 nil）：
+	// 在 SafetyCheck 之后、用户 hook 之前拦截记忆目录的写操作。
+	memoryGuard *memoryWriteGuard
 }
 
 func (h *runtimeHookAdapter) PreToolUse(ctx context.Context, evt hooks.ToolUsePayload) (map[string]any, error) {
@@ -655,6 +761,10 @@ func (h *runtimeHookAdapter) PreToolUse(ctx context.Context, evt hooks.ToolUsePa
 		if err := hooks.SafetyCheck(evt.Name, params); err != nil {
 			return nil, err
 		}
+	}
+	// 记忆写守卫：命中即 deny（错误经 ErrToolUseDenied 包装），不进用户 hook。
+	if err := h.memoryGuard.preToolUse(evt.Name, params); err != nil {
+		return nil, err
 	}
 	if h.executor == nil {
 		return params, nil

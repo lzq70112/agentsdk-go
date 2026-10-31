@@ -7,6 +7,9 @@ import (
 	"strings"
 )
 
+// boolValuePtr 返回 bool 的指针（生产代码用；测试侧另有同名语义的 boolPtr）。
+func boolValuePtr(v bool) *bool { return &v }
+
 // ResolveProjectRoot 智能解析项目根目录。
 // 优先级：环境变量 > 向上查找 go.mod > 当前工作目录
 // 自动处理符号链接（macOS /var -> /private/var）

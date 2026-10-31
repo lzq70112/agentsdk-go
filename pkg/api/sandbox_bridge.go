@@ -67,6 +67,17 @@ func buildSandboxManager(opts Options, settings *config.Settings) (*sandbox.Mana
 		}
 	}
 
+	// auto memory：记忆目录在默认工作区之外，写入需放行（spec §5）。
+	// extra 只读来源不放行——写入由 memoryWriteGuard 拒绝。
+	if opts.Memory != nil && opts.Memory.enabled() {
+		if memDir := strings.TrimSpace(opts.Memory.Dir); memDir != "" {
+			fs.Allow(memDir)
+			if r, err := filepath.EvalSymlinks(memDir); err == nil && strings.TrimSpace(r) != "" {
+				fs.Allow(r)
+			}
+		}
+	}
+
 	netAllow := opts.Sandbox.NetworkAllow
 	if len(netAllow) == 0 {
 		netAllow = defaultNetworkAllowList(opts.EntryPoint)
