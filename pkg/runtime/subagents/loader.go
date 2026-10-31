@@ -115,6 +115,29 @@ func LoadFromFS(opts LoaderOptions) ([]SubagentRegistration, []error) {
 	return registrations, errs
 }
 
+// LoadSingleSubagent loads one subagent definition from a .md file with YAML
+// frontmatter (same format as .agents/agents/*.md). Exposed for callers that
+// aggregate definitions from non-standard locations, e.g. the plugin loader.
+func LoadSingleSubagent(path string) (SubagentRegistration, error) {
+	fsLayer := config.NewFS("", nil)
+	fallback := strings.ToLower(strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)))
+	file, err := parseSubagentFile(path, fallback, fsLayer)
+	if err != nil {
+		return SubagentRegistration{}, err
+	}
+	model := normalizeModel(file.Metadata.Model)
+	whitelist := parseList(file.Metadata.Tools)
+	skills := parseList(file.Metadata.Skills)
+	meta := buildMetadataMap(file, whitelist, skills, model)
+	def := Definition{
+		Name:         file.Metadata.Name,
+		Description:  file.Metadata.Description,
+		BaseContext:  Context{ToolWhitelist: whitelist, Model: model, Metadata: meta},
+		DefaultModel: model,
+	}
+	return SubagentRegistration{Definition: def, Handler: buildHandler(file, meta)}, nil
+}
+
 func loadSubagentDir(root string, fsLayer *config.FS) (map[string]SubagentFile, []error) {
 	results := map[string]SubagentFile{}
 	var errs []error
