@@ -86,6 +86,11 @@ func RemoveMarketplace(root, name string) error {
 	return nil
 }
 
+// ListMarketplaces returns the known marketplace registry entries.
+func ListMarketplaces(root string) ([]KnownMarketplace, error) {
+	return loadKnownMarketplaces(root)
+}
+
 // ListMarketplacePlugins returns the plugin entries a marketplace offers.
 func ListMarketplacePlugins(root, name string) ([]MarketplacePlugin, error) {
 	clone := filepath.Join(root, "marketplaces", name)
