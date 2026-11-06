@@ -266,6 +266,53 @@ func TestSurfaceMemoryDocumentTruncation(t *testing.T) {
 	})
 }
 
+// TestMemoryWriteNoteSessionScoped 验证防双写记账的会话桶收敛（PerSession）：
+// 只有落进当前会话桶的写入才置位防双写标志——写错位置（如桶根，PerSession
+// 召回扫不到）时不能压制抽取，否则由抽取子代理兜底写入会话桶的路径被堵死。
+func TestMemoryWriteNoteSessionScoped(t *testing.T) {
+	dir := t.TempDir()
+	store := &memoryStore{autoDir: dir, perSession: true}
+	m := &memoryRuntime{
+		cfg:   MemoryOptions{Dir: dir, PerSession: true},
+		store: store,
+		guard: &memoryWriteGuard{autoDir: dir},
+	}
+	bucket := store.sessionBucketDir("dingtalk:user:1001")
+
+	// 写进会话桶：置位（防双写按设计跳过本轮抽取）。
+	m.noteSuccessfulMemoryWrite("write", map[string]any{
+		"file_path": filepath.Join(bucket, "user_role.md"),
+		"content":   "x",
+	}, "dingtalk:user:1001")
+	if !m.writeObserved.Load() {
+		t.Fatal("write into the session bucket must set writeObserved")
+	}
+
+	// 写进桶根（PerSession 召回扫不到的搁浅位置）：不置位，抽取兜底仍会跑。
+	m.writeObserved.Store(false)
+	m.noteSuccessfulMemoryWrite("write", map[string]any{
+		"file_path": filepath.Join(dir, "stranded.md"),
+		"content":   "x",
+	}, "dingtalk:user:1001")
+	if m.writeObserved.Load() {
+		t.Fatal("write outside the session bucket must not set writeObserved in PerSession mode")
+	}
+
+	// 全局桶模式：桶根写入照旧置位（历史行为不变）。
+	global := &memoryRuntime{
+		cfg:   MemoryOptions{Dir: dir},
+		store: &memoryStore{autoDir: dir},
+		guard: &memoryWriteGuard{autoDir: dir},
+	}
+	global.noteSuccessfulMemoryWrite("write", map[string]any{
+		"file_path": filepath.Join(dir, "legacy.md"),
+		"content":   "x",
+	}, "dingtalk:user:1001")
+	if !global.writeObserved.Load() {
+		t.Fatal("global mode root write must still set writeObserved")
+	}
+}
+
 // TestMemoryStorePerSessionIsolation 验证 PerSession 会话级记忆隔离的核心语义：
 // 各会话只看到自己桶内的记忆（多用户 IM 场景防串扰），extraDirs 仍跨会话共享，
 // 全局桶模式（perSession=false）下行为与历史一致。

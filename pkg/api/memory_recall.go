@@ -19,6 +19,10 @@ import (
 const (
 	memoryOriginRelevantMemory = "relevant_memory"
 
+	// memoryOriginSessionDir 是 PerSession 会话桶路径提示消息的标记值：历史
+	// 去重靠扫描该标记，每会话只注入一条。
+	memoryOriginSessionDir = "memory_session_dir"
+
 	memoryMetadataOrigin     = "origin"
 	memoryMetadataPaths      = "memory_paths"
 	memoryMetadataTotalBytes = "memory_total_bytes"
@@ -414,6 +418,45 @@ func (rt *Runtime) consumeMemoryRecall(prep *preparedRun) {
 		return
 	}
 	rt.appendRecallInjection(prep, job.selected, job.consumed, time.Now())
+}
+
+// injectMemoryDirHint 在 PerSession 模式下向会话历史注入一条"本会话记忆目录"
+// 提示（合成 user 消息，带压缩豁免标记，历史去重保证每会话仅一条）。常驻
+// memory-usage 提示在 PerSession 下不可用（路径无法按会话派生），没有这条
+// 提示主对话只能凭旧上下文猜路径，会把用户要求记住的信息写到桶根等本会话
+// 召回扫不到的位置，且防双写会连带压制抽取兜底。
+func (rt *Runtime) injectMemoryDirHint(prep *preparedRun) {
+	if rt == nil || rt.memory == nil || !rt.memory.cfg.PerSession {
+		return
+	}
+	if rt.opts.subagentDisabled {
+		return
+	}
+	sessionID := strings.TrimSpace(prep.normalized.SessionID)
+	if sessionID == "" {
+		return
+	}
+	for _, m := range prep.history.All() {
+		if m.Metadata == nil {
+			continue
+		}
+		if origin, _ := m.Metadata[memoryMetadataOrigin].(string); origin == memoryOriginSessionDir {
+			return
+		}
+	}
+	bucket := rt.memory.store.sessionBucketDir(sessionID)
+	prep.history.Append(message.Message{
+		Role: "user",
+		Content: "<system-reminder>\nMemory directory for this session: " + filepath.ToSlash(bucket) +
+			"\nWhen the user asks you to remember something, write it as a topic .md file (frontmatter: name/description/type) in this directory. " +
+			"Memories outside this directory are not surfaced for this session.\n</system-reminder>",
+		Metadata: map[string]any{
+			metadataTimestamp:    time.Now().UnixMilli(),
+			metadataSynthetic:    true,
+			metadataSyntheticKey: memoryOriginSessionDir,
+			memoryMetadataOrigin: memoryOriginSessionDir,
+		},
+	})
 }
 
 // appendRecallInjection 把选中的记忆按预算逐条 surface 并追加合成 user 消息；

@@ -191,6 +191,8 @@ func (rt *Runtime) runLoop(prep preparedRun, mdl model.Model, hookAdapter *runti
 		// auto memory 召回：用户消息落盘后启动（keyword 同步注入；llm 异步
 		// 预取，消费点在本回合首次模型调用前）。
 		rt.beginMemoryRecall(&prep)
+		// PerSession 会话桶路径提示（历史去重，每会话仅注入一条）。
+		rt.injectMemoryDirHint(&prep)
 	}
 
 	state := &middleware.State{Values: map[string]any{}}

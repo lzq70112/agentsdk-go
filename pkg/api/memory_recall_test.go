@@ -21,6 +21,60 @@ func newTestMemoryRuntime(memDir string, extraDirs ...string) *memoryRuntime {
 	}
 }
 
+// TestMemoryDirHintInjectOncePerSession 验证 PerSession 会话桶路径提示：注入
+// 恰好一条带会话桶路径的合成消息（历史去重防重复），且全局桶模式不注入——
+// 没有这条提示主对话会把用户要求记住的信息写到召回扫不到的桶根（实机事故：
+// 值班电话落桶根 + 防双写压制抽取兜底）。
+func TestMemoryDirHintInjectOncePerSession(t *testing.T) {
+	dir := t.TempDir()
+	rt := &Runtime{memory: &memoryRuntime{
+		cfg:   MemoryOptions{Dir: dir, PerSession: true},
+		store: &memoryStore{autoDir: dir, perSession: true},
+	}}
+
+	prep := preparedRun{
+		ctx:        context.Background(),
+		prompt:     "请记住一些信息",
+		history:    message.NewHistory(),
+		normalized: Request{SessionID: "dingtalk:user:1001", RequestID: "r1"},
+	}
+	rt.injectMemoryDirHint(&prep)
+	rt.injectMemoryDirHint(&prep)
+	if prep.history.Len() != 1 {
+		t.Fatalf("hint must inject exactly once, len=%d", prep.history.Len())
+	}
+	msg := prep.history.All()[0]
+	bucket := rt.memory.store.sessionBucketDir("dingtalk:user:1001")
+	if !strings.Contains(msg.Content, filepath.ToSlash(bucket)) {
+		t.Fatalf("hint must carry session bucket path %q, got %q", bucket, msg.Content)
+	}
+	if msg.Metadata[metadataSynthetic] != true || msg.Metadata[metadataSyntheticKey] != memoryOriginSessionDir {
+		t.Fatalf("hint metadata = %v / %v", msg.Metadata[metadataSynthetic], msg.Metadata[metadataSyntheticKey])
+	}
+
+	// 已有提示的历史（如从存储恢复的旧会话）：不重复注入。
+	rt.injectMemoryDirHint(&prep)
+	if prep.history.Len() != 1 {
+		t.Fatal("existing hint in history must suppress re-injection")
+	}
+
+	// 全局桶模式：不注入（常驻 memory-usage 提示已覆盖路径指引）。
+	global := &Runtime{memory: &memoryRuntime{
+		cfg:   MemoryOptions{Dir: dir},
+		store: &memoryStore{autoDir: dir},
+	}}
+	gprep := preparedRun{
+		ctx:        context.Background(),
+		prompt:     "请记住一些信息",
+		history:    message.NewHistory(),
+		normalized: Request{SessionID: "s", RequestID: "r1"},
+	}
+	global.injectMemoryDirHint(&gprep)
+	if gprep.history.Len() != 0 {
+		t.Fatal("global mode must not inject the session dir hint")
+	}
+}
+
 func TestMemoryQueryGate(t *testing.T) {
 	tests := []struct {
 		name string

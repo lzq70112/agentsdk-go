@@ -326,8 +326,10 @@ func (rt *Runtime) maybeStartMemoryExtraction(sessionID, prompt string) {
 }
 
 // noteSuccessfulMemoryWrite 由工具执行器在 write/edit 成功执行后调用：
-// 目标落在记忆目录内置位防双写标志（回合结束抽取时消费）。
-func (m *memoryRuntime) noteSuccessfulMemoryWrite(toolName string, params map[string]any) {
+// 目标落在记忆目录内置位防双写标志（回合结束抽取时消费）。PerSession 模式下
+// 只有落进当前会话桶的写入才算数——主对话写错位置（如桶根，PerSession 召回
+// 扫不到）时不能压制抽取，由抽取子代理把内容正确落进会话桶兜底。
+func (m *memoryRuntime) noteSuccessfulMemoryWrite(toolName string, params map[string]any, sessionID string) {
 	if m == nil || m.guard == nil {
 		return
 	}
@@ -340,7 +342,11 @@ func (m *memoryRuntime) noteSuccessfulMemoryWrite(toolName string, params map[st
 	if err != nil {
 		return
 	}
-	if withinDir(m.guard.autoDir, target) {
+	dir := m.guard.autoDir
+	if m.cfg.PerSession && strings.TrimSpace(sessionID) != "" {
+		dir = m.store.sessionBucketDir(sessionID)
+	}
+	if withinDir(dir, target) {
 		m.writeObserved.Store(true)
 	}
 }

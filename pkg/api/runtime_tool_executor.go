@@ -210,7 +210,7 @@ func (t *runtimeToolExecutor) execute(ctx context.Context, call model.ToolCall, 
 		runtimeLogger.warnf("[api:toolExec] tool=%s id=%s session=%s failed: %v", call.Name, call.ID, t.sessionID, err)
 	} else {
 		// 防双写记账：主对话成功写入记忆目录 → 跳过本轮后台抽取。
-		t.memoryWrites.noteSuccessfulMemoryWrite(call.Name, call.Arguments)
+		t.memoryWrites.noteSuccessfulMemoryWrite(call.Name, call.Arguments, t.sessionID)
 	}
 	content := toolCallResultContent(result, err)
 
