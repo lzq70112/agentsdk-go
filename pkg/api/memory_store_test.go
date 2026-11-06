@@ -66,7 +66,7 @@ func TestMemoryStoreScanParsesFrontmatter(t *testing.T) {
 	}
 
 	store := &memoryStore{autoDir: dir}
-	headers := store.scan()
+	headers := store.scan("")
 	if len(headers) != 3 {
 		t.Fatalf("scanned %d headers, want 3 (valid ones only): %+v", len(headers), headers)
 	}
@@ -121,7 +121,7 @@ func TestMemoryStoreScanExcludesMemoryMdAndNonUTF8(t *testing.T) {
 	}
 
 	store := &memoryStore{autoDir: dir}
-	headers := store.scan()
+	headers := store.scan("")
 	if len(headers) != 1 {
 		t.Fatalf("scanned %d headers, want 1: %+v", len(headers), headers)
 	}
@@ -144,7 +144,7 @@ func TestMemoryStoreScanCapsTwoHundredByMtime(t *testing.T) {
 	}
 
 	store := &memoryStore{autoDir: dir}
-	headers := store.scan()
+	headers := store.scan("")
 	if len(headers) != memoryMaxScanFileCount {
 		t.Fatalf("scanned %d headers, want cap %d", len(headers), memoryMaxScanFileCount)
 	}
@@ -166,7 +166,7 @@ func TestMemoryStoreScanExtraDirsPrefixAndDedup(t *testing.T) {
 	writeMemoryFile(t, extra2, "shared.md", memoryDoc("c", "extra 来源二"), "body", 0)
 
 	store := &memoryStore{autoDir: auto, extraDirs: []string{extra1, extra2}}
-	headers := store.scan()
+	headers := store.scan("")
 	if len(headers) != 3 {
 		t.Fatalf("scanned %d headers, want 3: %+v", len(headers), headers)
 	}
@@ -188,7 +188,7 @@ func TestMemoryStoreScanExtraDirsPrefixAndDedup(t *testing.T) {
 
 func TestMemoryStoreScanMissingDirIsNoop(t *testing.T) {
 	store := &memoryStore{autoDir: filepath.Join(t.TempDir(), "not-exist")}
-	if headers := store.scan(); len(headers) != 0 {
+	if headers := store.scan(""); len(headers) != 0 {
 		t.Fatalf("missing dir must scan to empty, got %+v", headers)
 	}
 }
@@ -197,7 +197,7 @@ func TestBuildMemoryManifestLineFormat(t *testing.T) {
 	dir := t.TempDir()
 	writeMemoryFile(t, dir, "user_role.md", memoryDoc("user role", "用户角色", "user"), "body", 0)
 	store := &memoryStore{autoDir: dir}
-	headers := store.scan()
+	headers := store.scan("")
 	if len(headers) != 1 {
 		t.Fatalf("scanned %d headers, want 1", len(headers))
 	}
@@ -264,4 +264,70 @@ func TestSurfaceMemoryDocumentTruncation(t *testing.T) {
 			t.Fatal("byte truncation must not split multi-byte runes")
 		}
 	})
+}
+
+// TestMemoryStorePerSessionIsolation 验证 PerSession 会话级记忆隔离的核心语义：
+// 各会话只看到自己桶内的记忆（多用户 IM 场景防串扰），extraDirs 仍跨会话共享，
+// 全局桶模式（perSession=false）下行为与历史一致。
+func TestMemoryStorePerSessionIsolation(t *testing.T) {
+	dir := t.TempDir()
+	store := &memoryStore{autoDir: dir, perSession: true}
+
+	// 会话桶目录名与 sessionID 由 sessionBucketDir 派生：写入前先取派生名。
+	bucketA := store.sessionBucketDir("dingtalk:user:1001")
+	bucketB := store.sessionBucketDir("dingtalk:user:2002")
+	if bucketA == bucketB {
+		t.Fatalf("distinct sessions must map to distinct buckets, both %q", bucketA)
+	}
+	if !strings.Contains(filepath.Base(bucketA), "dingtalk-user-1001") {
+		t.Fatalf("bucket name must sanitize sessionID, got %q", filepath.Base(bucketA))
+	}
+	writeMemoryFile(t, bucketA, "user_role.md", memoryDoc("a", "用户甲偏好"), "A 的记忆", 0)
+	writeMemoryFile(t, bucketB, "user_role.md", memoryDoc("b", "用户乙偏好"), "B 的记忆", 0)
+
+	// 会话 A 只召回 A 的记忆，看不到 B 的。
+	headersA := store.scan("dingtalk:user:1001")
+	if len(headersA) != 1 || headersA[0].Path != filepath.Join(bucketA, "user_role.md") {
+		t.Fatalf("session A scan = %+v, want only its own bucket file", headersA)
+	}
+	headersB := store.scan("dingtalk:user:2002")
+	if len(headersB) != 1 || headersB[0].Path != filepath.Join(bucketB, "user_role.md") {
+		t.Fatalf("session B scan = %+v, want only its own bucket file", headersB)
+	}
+
+	// extraDirs 跨会话共享：任一会话都能召回。
+	extra := t.TempDir()
+	writeMemoryFile(t, extra, "shared.md", memoryDoc("s", "共享知识"), "共享内容", 0)
+	store.extraDirs = []string{extra}
+	for _, sid := range []string{"dingtalk:user:1001", "dingtalk:user:2002"} {
+		found := false
+		for _, h := range store.scan(sid) {
+			if h.Source == memorySourceExtra {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("session %s must still see extra dirs (shared recall source)", sid)
+		}
+	}
+
+	// 全局桶模式（perSession=false）：忽略会话 ID，扫 autoDir 本身（历史行为；
+	// WalkDir 递归连子目录一起扫，故用独立干净目录断言）。
+	globalDir := t.TempDir()
+	writeMemoryFile(t, globalDir, "legacy.md", memoryDoc("l", "旧桶根记忆"), "桶根内容", 0)
+	global := &memoryStore{autoDir: globalDir}
+	if got := len(global.scan("dingtalk:user:1001")); got != 1 {
+		t.Fatalf("global mode scan = %d headers, want 1 from autoDir root", got)
+	}
+
+	// 游标按会话隔离：extractor 的 statePathFor 落在各自桶内。
+	rt := &Runtime{memory: &memoryRuntime{store: store}}
+	ext := &memoryExtractor{rt: rt}
+	pathA := ext.statePathFor("dingtalk:user:1001")
+	if !strings.HasPrefix(pathA, bucketA) {
+		t.Fatalf("state file for session A must live in its bucket: %q", pathA)
+	}
+	if filepath.Base(pathA) != ".memory_state.json" {
+		t.Fatalf("state file name = %q", filepath.Base(pathA))
+	}
 }

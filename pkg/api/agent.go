@@ -128,8 +128,11 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		builder.AddSection(SystemPromptSectionMemory, fmt.Sprintf("## Memory\n\n%s", strings.TrimSpace(memory)), SystemPromptPriorityMemory)
 	}
 
-	// auto memory 常驻提示（Memory 禁用时整段不注入）。
-	if opts.Memory != nil && opts.Memory.enabled() && strings.TrimSpace(opts.Memory.Dir) != "" {
+	// auto memory 常驻提示（Memory 禁用时整段不注入）。PerSession 时不注入：
+	// 该提示指向固定的桶根目录（New 时渲染一次，无法按会话派生），指引主对话
+	// 主动写会造成跨会话串扰面——记忆统一由回合后的抽取链路写入当前会话桶
+	// （extract 提示词覆盖"用户明确要求记住"场景）。
+	if opts.Memory != nil && opts.Memory.enabled() && strings.TrimSpace(opts.Memory.Dir) != "" && !opts.Memory.PerSession {
 		builder.AddSection(SystemPromptSectionMemoryUsage, renderMemoryUsagePrompt(opts.Memory.Dir), SystemPromptPriorityMemoryUsage)
 	}
 

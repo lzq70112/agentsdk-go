@@ -42,15 +42,28 @@ type memoryHeader struct {
 
 // memoryStore 扫描 auto 目录与 extra 目录中的主题记忆文件。
 type memoryStore struct {
-	autoDir   string
-	extraDirs []string
+	autoDir    string
+	extraDirs  []string
+	perSession bool
 }
 
-func (s *memoryStore) scan() []memoryHeader {
+// sessionBucketDir 返回某会话的 auto 记忆目录：PerSession 时为
+// <autoDir>/sessions/<sanitizePathComponent(sessionID)>（sanitizePathComponent
+// 把 ':' 等非法目录字符替换为 '-'，如 dingtalk:user:123 → dingtalk-user-123；
+// 不同会话 ID sanitize 后碰撞即共享桶，语义退化为共享模式，可接受），
+// 否则恒为 autoDir（全局共享桶，现状行为）。
+func (s *memoryStore) sessionBucketDir(sessionID string) string {
+	if s == nil || !s.perSession {
+		return s.autoDir
+	}
+	return filepath.Join(s.autoDir, "sessions", sanitizePathComponent(sessionID))
+}
+
+func (s *memoryStore) scan(sessionID string) []memoryHeader {
 	if s == nil {
 		return nil
 	}
-	headers := s.scanDir(s.autoDir, "", memorySourceAuto)
+	headers := s.scanDir(s.sessionBucketDir(sessionID), "", memorySourceAuto)
 	for i, dir := range s.extraDirs {
 		headers = append(headers, s.scanDir(dir, fmt.Sprintf("extra-%d/", i), memorySourceExtra)...)
 	}

@@ -195,7 +195,7 @@ func newMemoryRuntime(opts Options, sandboxRoot string) *memoryRuntime {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &memoryRuntime{
 		cfg:      cfg,
-		store:    &memoryStore{autoDir: dir, extraDirs: extraDirs},
+		store:    &memoryStore{autoDir: dir, extraDirs: extraDirs, perSession: cfg.PerSession},
 		selector: selector,
 		guard: &memoryWriteGuard{
 			autoDir:     dir,
@@ -343,7 +343,10 @@ func (rt *Runtime) beginMemoryRecall(prep *preparedRun) {
 	if consumed >= memorySessionBudgetBytes {
 		return
 	}
-	candidates := filterSurfacedMemories(rt.memory.store.scan(), surfaced)
+	// PerSession 模式下只扫当前会话的桶（多用户 IM 场景防记忆串扰）；
+	// 全局桶模式下 sessionID 被忽略，行为与历史一致。
+	sessionID := strings.TrimSpace(prep.normalized.SessionID)
+	candidates := filterSurfacedMemories(rt.memory.store.scan(sessionID), surfaced)
 	if len(candidates) == 0 {
 		return
 	}

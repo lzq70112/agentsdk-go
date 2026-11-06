@@ -54,8 +54,7 @@ func memoryExtractToolWhitelist() []string {
 // 全局并发 1，抽取进行中又来新回合则记 pending、完成后自动补跑一轮；
 // 抽取失败只 warn，绝不影响主回合。
 type memoryExtractor struct {
-	rt        *Runtime
-	statePath string
+	rt *Runtime
 
 	// once 是单轮抽取的执行函数（默认 extractOnce），可替换以便测试注入
 	// 确定的时序（gate/pending/Close 用例）。
@@ -70,14 +69,19 @@ type memoryExtractor struct {
 	pending bool
 }
 
+// statePathFor 返回游标文件路径：PerSession 时游标随会话桶隔离（多会话并发
+// 抽取互不推进对方的游标），否则为桶根的全局游标（现状行为）。
+func (e *memoryExtractor) statePathFor(sessionID string) string {
+	return filepath.Join(e.rt.memory.store.sessionBucketDir(sessionID), memoryStateFileName)
+}
+
 // initExtractor 在 New() 完成 runtime 装配后初始化抽取器（Memory 禁用时不建）。
 func (m *memoryRuntime) initExtractor(rt *Runtime) {
 	if m == nil {
 		return
 	}
 	m.extractor = &memoryExtractor{
-		rt:        rt,
-		statePath: filepath.Join(m.cfg.Dir, memoryStateFileName),
+		rt: rt,
 	}
 	m.extractor.once = m.extractor.extractOnce
 	m.extractor.ctx, m.extractor.cancel = context.WithCancel(context.Background())
@@ -85,8 +89,9 @@ func (m *memoryRuntime) initExtractor(rt *Runtime) {
 
 // loadCursor 读取游标；文件不存在或损坏按 0 处理（全量抽取一次，与恢复会话
 // 的增量语义一致）。
-func (e *memoryExtractor) loadCursor() int {
-	data, err := os.ReadFile(e.statePath)
+func (e *memoryExtractor) loadCursor(sessionID string) int {
+	statePath := e.statePathFor(sessionID)
+	data, err := os.ReadFile(statePath)
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			runtimeLogger.warnf("[api:memory-extract] load state failed: %v", err)
@@ -105,25 +110,26 @@ func (e *memoryExtractor) loadCursor() int {
 }
 
 // saveCursor 原子落盘游标（tmp+rename，对齐 cron_store 模式）。
-func (e *memoryExtractor) saveCursor(count int) {
-	if err := e.saveCursorErr(count); err != nil {
+func (e *memoryExtractor) saveCursor(sessionID string, count int) {
+	if err := e.saveCursorErr(sessionID, count); err != nil {
 		runtimeLogger.warnf("[api:memory-extract] save state failed: %v", err)
 	}
 }
 
-func (e *memoryExtractor) saveCursorErr(count int) error {
+func (e *memoryExtractor) saveCursorErr(sessionID string, count int) error {
+	statePath := e.statePathFor(sessionID)
 	data, err := json.MarshalIndent(memoryStateFile{LastCursorMessageID: count}, "", "  ")
 	if err != nil {
 		return fmt.Errorf("api: memory state marshal: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(e.statePath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(statePath), 0o755); err != nil {
 		return fmt.Errorf("api: memory state dir: %w", err)
 	}
-	tmp := e.statePath + ".tmp"
+	tmp := statePath + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return fmt.Errorf("api: memory state write: %w", err)
 	}
-	if err := os.Rename(tmp, e.statePath); err != nil {
+	if err := os.Rename(tmp, statePath); err != nil {
 		_ = os.Remove(tmp)
 		return fmt.Errorf("api: memory state rename: %w", err)
 	}
@@ -180,7 +186,7 @@ func (e *memoryExtractor) extractOnce(sessionID string) bool {
 	if rt.memory.writeObserved.Swap(false) {
 		runtimeLogger.printf("[api:memory-extract] session=%s skip: main conversation wrote memory this cycle", sessionID)
 		if history, ok := rt.SessionHistory(sessionID); ok {
-			e.saveCursor(len(history))
+			e.saveCursor(sessionID, len(history))
 		}
 		return true
 	}
@@ -189,20 +195,29 @@ func (e *memoryExtractor) extractOnce(sessionID string) bool {
 		return false
 	}
 	histLen := len(history)
-	cursor := e.loadCursor()
+	cursor := e.loadCursor(sessionID)
 	if cursor > histLen {
 		// 压缩等导致历史变短：游标收敛到当前长度（摘要视作已处理）。
 		cursor = histLen
-		e.saveCursor(cursor)
+		e.saveCursor(sessionID, cursor)
 	}
 	newCount := histLen - cursor
 	if newCount <= 0 {
 		return false
 	}
 
-	manifest := buildMemoryManifest(rt.memory.store.scan())
+	// 抽取目标桶：PerSession 时为会话子桶（写前确保存在——extract 提示词
+	// 承诺"目录已存在，直接写入"），否则为桶根（现状行为）。
+	bucket := rt.memory.store.sessionBucketDir(sessionID)
+	if rt.memory.cfg.PerSession {
+		if err := os.MkdirAll(bucket, 0o755); err != nil {
+			runtimeLogger.warnf("[api:memory-extract] mkdir session bucket %s failed: %v", bucket, err)
+			return true
+		}
+	}
+	manifest := buildMemoryManifest(rt.memory.store.scan(sessionID))
 	prompt := renderMemoryExtractPrompt(extractPromptParams{
-		MemoryDir:        rt.memory.cfg.Dir,
+		MemoryDir:        bucket,
 		NewMessageCount:  newCount,
 		TypeGuide:        memoryTypeGuidePrompt,
 		ExistingMemories: manifest,
@@ -214,7 +229,7 @@ func (e *memoryExtractor) extractOnce(sessionID string) bool {
 	subRuntime, err := New(e.ctx, subOpts)
 	if err != nil {
 		runtimeLogger.warnf("[api:memory-extract] create sub runtime failed session=%s: %v", sessionID, err)
-		e.saveCursor(histLen)
+		e.saveCursor(sessionID, histLen)
 		return true
 	}
 	defer subRuntime.Close()
@@ -227,7 +242,7 @@ func (e *memoryExtractor) extractOnce(sessionID string) bool {
 		// 抽取失败只 warn（游标照常推进，不重试，绝不影响主回合）。
 		runtimeLogger.warnf("[api:memory-extract] subagent run failed session=%s: %v", sessionID, err)
 	}
-	e.saveCursor(histLen)
+	e.saveCursor(sessionID, histLen)
 	return true
 }
 
@@ -270,15 +285,17 @@ func (e *memoryExtractor) buildSubOptions(sessionID string, history []message.Me
 	// 重建全新 builder，Memory 禁用时 memory-usage 段自然不注入。
 	sub.SystemPromptBuilder = nil
 	// 子 runtime 的 Memory 已禁用（memoryGuard 为 nil），改挂抽取专用的严格
-	// 写守卫：write/edit 只允许落记忆目录内的主题 .md。
+	// 写守卫：write/edit 只允许落本会话记忆桶内的主题 .md（PerSession 时为
+	// 会话子桶，否则为桶根）。
+	bucket := e.rt.memory.store.sessionBucketDir(sessionID)
 	sub.memoryExtractGuard = &memoryWriteGuard{
-		autoDir:     e.rt.memory.cfg.Dir,
+		autoDir:     bucket,
 		sandboxRoot: e.rt.sbRoot,
 		strict:      true,
 	}
 	// Memory 禁用时 buildSandboxManager 不放行记忆目录，显式加入允许路径，
 	// 抽取写入才能落盘。
-	sub.Sandbox.AllowedPaths = append(append([]string(nil), sub.Sandbox.AllowedPaths...), e.rt.memory.cfg.Dir)
+	sub.Sandbox.AllowedPaths = append(append([]string(nil), sub.Sandbox.AllowedPaths...), bucket)
 	return sub
 }
 

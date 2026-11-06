@@ -89,6 +89,13 @@ type MemoryOptions struct {
 	// SelectorTier 是二期 LLM 选择器的模型档位；一期 keyword 选择器不使用。
 	SelectorTier ModelTier
 
+	// PerSession 开启会话级记忆隔离：auto 记忆桶按会话细分（<Dir>/sessions/
+	// <sanitize(sessionID)>/），召回只扫当前会话的桶、抽取与游标也落在该桶内，
+	// 多用户 IM 场景下不同会话的记忆互不串扰；extraDirs 仍是跨会话共享的召回源。
+	// 常驻 memory-usage 提示在 PerSession 下不注入——主对话不再被指引主动写
+	// 记忆，记忆统一由回合后的抽取链路维护（"用户明确要求记住"由抽取兜底）。
+	PerSession bool
+
 	// autoDerived 标记本配置由 withDefaults 从 nil 派生（宿主未配置 Memory）。
 	// 默认派生配置只保留一期语义（常驻提示/召回/写守卫），后台抽取不启用：
 	// 抽取有子代理模型调用与记忆目录写盘副作用，不应在宿主从未提及 Memory
