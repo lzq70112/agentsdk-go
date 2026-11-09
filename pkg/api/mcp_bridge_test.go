@@ -28,6 +28,35 @@ func TestCollectMCPServersMergesSourcesAndDedups(t *testing.T) {
 	}
 }
 
+// TestCollectMCPServersSameUrlNameStable 验证异名同 URL 去重时胜者确定：
+// map 遍历随机曾让 mcp__<server>__<tool> 工具名随 New() 漂移、打破 tools
+// 前缀稳定（KV 缓存），排序后必须恒由字母序第一的名字胜出。
+func TestCollectMCPServersSameUrlNameStable(t *testing.T) {
+	settings := &config.Settings{
+		MCP: &config.MCPConfig{
+			Servers: map[string]config.MCPServerConfig{
+				"zeta":  {Type: "http", URL: "http://same.example"},
+				"alpha": {Type: "http", URL: "http://same.example"},
+			},
+		},
+	}
+	var first string
+	for i := 0; i < 20; i++ {
+		servers := collectMCPServers(settings, nil, nil, nil)
+		if len(servers) != 1 {
+			t.Fatalf("expected 1 deduped server, got %d: %+v", len(servers), servers)
+		}
+		if first == "" {
+			first = servers[0].Name
+		} else if servers[0].Name != first {
+			t.Fatalf("server name drifted across runs: %q vs %q", first, servers[0].Name)
+		}
+	}
+	if first != "alpha" {
+		t.Fatalf("expected alphabetically first name to win dedup, got %q", first)
+	}
+}
+
 func TestCollectMCPServersPreservesSettingsOptions(t *testing.T) {
 	settings := &config.Settings{
 		MCP: &config.MCPConfig{

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/lzq70112/agentsdk-go/pkg/config"
@@ -61,17 +62,30 @@ func collectMCPServers(settings *config.Settings, explicit, disabled []string, p
 		add(mcpServer{Spec: spec, URL: spec})
 	}
 
+	// map 遍历顺序随机：异名同 URL 的 server 谁先进 seen 谁的名字胜出，
+	// mcp__<server>__<tool> 工具名就会随 New() 漂移、打破 tools 前缀稳定，
+	// 因此两处来源都按名字排序后遍历，保证注册顺序与去重胜者确定。
 	if settings != nil && settings.MCP != nil {
-		for name, cfg := range settings.MCP.Servers {
-			add(mcpServerFromConfig(name, cfg))
+		names := make([]string, 0, len(settings.MCP.Servers))
+		for name := range settings.MCP.Servers {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			add(mcpServerFromConfig(name, settings.MCP.Servers[name]))
 		}
 	}
 
-	for name, cfg := range pluginServers {
+	pluginNames := make([]string, 0, len(pluginServers))
+	for name := range pluginServers {
+		pluginNames = append(pluginNames, name)
+	}
+	sort.Strings(pluginNames)
+	for _, name := range pluginNames {
 		if _, ok := named[strings.ToLower(strings.TrimSpace(name))]; ok {
 			continue // settings 优先：同名 server 由 settings 定义胜出
 		}
-		add(mcpServerFromConfig(name, cfg))
+		add(mcpServerFromConfig(name, pluginServers[name]))
 	}
 	return servers
 }

@@ -988,10 +988,10 @@ func TestSubagentTool_Description_ListsRegisteredTypes(t *testing.T) {
 }
 
 // TestSubagentTool_TypeAllowedToolsNoLongerNarrowsTools 验证类型的 AllowedTools
-// 白名单不再收窄子 agent 工具面：子请求的工具集与主请求完全一致（read/write/grep/
-// customEcho/subagent 全在）。这条测试守住逐字节 cache 契约——白名单收窄曾经把
-// write 等工具从子请求删掉，工具块从第一个 token 起就与主请求分叉，KV 缓存全部
-// 落空；AllowedTools 字段保留但不再影响子请求工具集。
+// 白名单不再收窄子 agent 工具面：子请求的工具集与主请求一致（read/write/grep/
+// customEcho 全在；subagent 系按下发隐藏契约剔除）。这条测试守住逐字节 cache 契约
+// ——白名单收窄曾经把 write 等工具从子请求删掉，工具块从第一个 token 起就与主请求
+// 分叉，KV 缓存全部落空；AllowedTools 字段保留但不再影响子请求工具集。
 func TestSubagentTool_TypeAllowedToolsNoLongerNarrowsTools(t *testing.T) {
 	ctx := context.Background()
 	mm := &recordingMockModel{}
@@ -1040,23 +1040,24 @@ func TestSubagentTool_TypeAllowedToolsNoLongerNarrowsTools(t *testing.T) {
 		t.Fatalf("expected subagent success, got: %s", res.Output)
 	}
 
-	var subReq model.Request
-	for i := range mm.calls {
-		if len(mm.calls[i].Messages) > len(subReq.Messages) {
-			subReq = mm.calls[i]
-		}
-	}
-	if len(subReq.Messages) == 0 {
+	childReq := childRequest(mm.calls, "explorer")
+	if childReq == nil {
 		t.Fatal("subagent runtime was not invoked")
 	}
-	childTools := toolNames(subReq.Tools)
-	for _, want := range []string{"read", "write", "grep", "customEcho", subagentToolName} {
+	childTools := toolNames(childReq.Tools)
+	for _, want := range []string{"read", "write", "grep", "customEcho"} {
 		if !hasTool(childTools, want) {
 			t.Fatalf("类型白名单不应收窄工具面：child runtime missing %q, got %v", want, childTools)
 		}
 	}
-	if strings.Join(childTools, ",") != strings.Join(toolNames(mm.calls[0].Tools), ",") {
-		t.Fatalf("child tool set drifted from main: main=%v child=%v", toolNames(mm.calls[0].Tools), childTools)
+	// 逐字节锁定子面 = 主面 - subagent 系（下发隐藏，递归由 Execute 兜底阻断）。
+	gotTools, err := json.Marshal(childReq.Tools)
+	if err != nil {
+		t.Fatalf("marshal child tools: %v", err)
+	}
+	wantTools := wantChildToolsJSON(t, &mm.calls[0])
+	if !bytes.Equal(wantTools, gotTools) {
+		t.Fatalf("child tool set drifted from main-minus-subagent:\nwant=%s\ngot=%s", wantTools, gotTools)
 	}
 }
 
@@ -1123,7 +1124,7 @@ func TestSubagentTool_TypeSystemPromptOverridesChildIdentity(t *testing.T) {
 }
 
 // TestSubagentTool_UnknownTypeFallsBackToDefault 验证类型名不存在时回退默认通用型
-// （全量继承主工具集），派发不因选错类型而失败。
+// （全量继承主工具集，subagent 系按下发隐藏契约剔除），派发不因选错类型而失败。
 func TestSubagentTool_UnknownTypeFallsBackToDefault(t *testing.T) {
 	ctx := context.Background()
 	mm := &recordingMockModel{}
@@ -1173,27 +1174,20 @@ func TestSubagentTool_UnknownTypeFallsBackToDefault(t *testing.T) {
 		t.Fatalf("expected subagent success, got: %s", res.Output)
 	}
 
-	var subReq model.Request
-	for i := range mm.calls {
-		if len(mm.calls[i].Messages) > len(subReq.Messages) {
-			subReq = mm.calls[i]
-		}
+	childReq := childRequest(mm.calls, "worker")
+	if childReq == nil {
+		t.Fatal("subagent runtime was not invoked")
 	}
-	childTools := toolNames(subReq.Tools)
+	childTools := toolNames(childReq.Tools)
 	for _, want := range []string{"read", "write", "customEcho"} {
 		if !hasTool(childTools, want) {
 			t.Fatalf("default fallback should keep %q, got %v", want, childTools)
 		}
 	}
-	if !hasTool(childTools, "subagent") {
-		t.Fatalf("child runtime should expose subagent, got %v", childTools)
+	if hasTool(childTools, subagentToolName) {
+		t.Fatalf("child runtime should not expose subagent（下发隐藏）, got %v", childTools)
 	}
-	subtask := ""
-	for _, msg := range subReq.Messages {
-		if strings.Contains(msg.Content, "[Subtask]") {
-			subtask = msg.Content
-		}
-	}
+	subtask := subtaskMessage(childReq, "worker")
 	if strings.Contains(subtask, "只读") {
 		t.Fatalf("unknown type should not inject explorer append prompt, got: %q", subtask)
 	}
@@ -1202,7 +1196,8 @@ func TestSubagentTool_UnknownTypeFallsBackToDefault(t *testing.T) {
 // TestSubagentTool_ChildKeepsMCPAndFullBuiltinTools 验证带 AllowedTools 的类型
 // 派发时，MCP 工具与全部 builtin 工具都进入子请求：类型白名单已不再收窄任何工具面
 // （MCP 工具过去就不被收窄，现在 builtin 同样不被收窄），子请求工具集与主请求
-// 完全一致——任何收窄都会让 tools 前缀与主请求分叉、KV 缓存落空。
+// （剔除 subagent 系下发隐藏工具）完全一致——任何收窄都会让 tools 前缀与主请求
+// 分叉、KV 缓存落空。
 func TestSubagentTool_ChildKeepsMCPAndFullBuiltinTools(t *testing.T) {
 	origBase := patchedNewMCPClient
 	origOpts := patchedNewMCPClientWithOptions
@@ -1265,23 +1260,24 @@ func TestSubagentTool_ChildKeepsMCPAndFullBuiltinTools(t *testing.T) {
 		t.Fatalf("expected subagent success, got: %s", res.Output)
 	}
 
-	var subReq model.Request
-	for i := range mm.calls {
-		if len(mm.calls[i].Messages) > len(subReq.Messages) {
-			subReq = mm.calls[i]
-		}
-	}
-	if len(subReq.Messages) == 0 {
+	childReq := childRequest(mm.calls, "explorer")
+	if childReq == nil {
 		t.Fatal("subagent runtime was not invoked")
 	}
-	childTools := toolNames(subReq.Tools)
-	for _, want := range []string{"echo", "write", "read", subagentToolName} {
+	childTools := toolNames(childReq.Tools)
+	for _, want := range []string{"echo", "write", "read"} {
 		if !hasTool(childTools, want) {
 			t.Fatalf("child runtime missing %q: 类型白名单不应收窄工具面, got %v", want, childTools)
 		}
 	}
-	if strings.Join(childTools, ",") != strings.Join(toolNames(mm.calls[0].Tools), ",") {
-		t.Fatalf("child tool set drifted from main: main=%v child=%v", toolNames(mm.calls[0].Tools), childTools)
+	// 逐字节锁定子面 = 主面 - subagent 系；MCP 工具与全部 builtin 必须原样保留。
+	gotTools, err := json.Marshal(childReq.Tools)
+	if err != nil {
+		t.Fatalf("marshal child tools: %v", err)
+	}
+	wantTools := wantChildToolsJSON(t, &mm.calls[0])
+	if !bytes.Equal(wantTools, gotTools) {
+		t.Fatalf("child tool set drifted from main-minus-subagent:\nwant=%s\ngot=%s", wantTools, gotTools)
 	}
 }
 
@@ -2227,6 +2223,39 @@ func subtaskMessage(req *model.Request, name string) string {
 		}
 	}
 	return ""
+}
+
+// childRequest 返回第一条携带 "[Subtask] <name>:" 消息的模型请求，即该名字
+// 子 agent 的真实子请求。隔离上下文后子请求只有一条 delegation 消息，恒短于
+// 主请求，不能用"最长消息请求"启发式定位——那会恒选主请求、子请求断言落空。
+func childRequest(calls []model.Request, name string) *model.Request {
+	for i := range calls {
+		if subtaskMessage(&calls[i], name) != "" {
+			return &calls[i]
+		}
+	}
+	return nil
+}
+
+// wantChildToolsJSON 返回主请求工具面剔除 subagent 系四工具后的 JSON 编码，
+// 作为子请求工具面的逐字节预期（现行契约：注册保留、下发隐藏、Execute 拒绝兜底）。
+func wantChildToolsJSON(t *testing.T, mainReq *model.Request) []byte {
+	t.Helper()
+	var mainWithoutSubagent []model.ToolDefinition
+	for _, def := range mainReq.Tools {
+		if strings.EqualFold(def.Name, subagentToolName) ||
+			strings.EqualFold(def.Name, subagentStatusToolName) ||
+			strings.EqualFold(def.Name, subagentStopToolName) ||
+			strings.EqualFold(def.Name, subagentOutputToolName) {
+			continue
+		}
+		mainWithoutSubagent = append(mainWithoutSubagent, def)
+	}
+	b, err := json.Marshal(mainWithoutSubagent)
+	if err != nil {
+		t.Fatalf("marshal expected child tools: %v", err)
+	}
+	return b
 }
 
 // requestContent 把请求的全部消息内容（正文 + tool 执行结果）拼接成一个字符串，
