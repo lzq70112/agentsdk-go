@@ -51,6 +51,9 @@ type runtimeToolExecutor struct {
 	sessionID string
 	deferred  *deferredToolState
 	questions *questionRegistry
+	// deny 是 settings permissions.deny 编译后的规则（nil = 未配置），
+	// 在 hooks 之前评估，命中即拒。
+	deny []denyRule
 	// memoryWrites 是 auto memory 的防双写记账（Memory 禁用时为 nil）：
 	// write/edit 成功落记忆目录时置位，回合结束抽取时消费。
 	memoryWrites *memoryRuntime
@@ -143,6 +146,26 @@ func (t *runtimeToolExecutor) execute(ctx context.Context, call model.ToolCall, 
 		}
 	}
 
+	// deniedCallResult 把拒绝错误落成 tool result 回给模型，让模型读到
+	// 拒绝原因继续调整，而不是看到裸 error 中断整个回合。
+	deniedCallResult := func(denyErr error) (*tool.CallResult, error) {
+		errContent := toolCallResultContent(nil, denyErr)
+		appendToolResult(errContent)
+		now := time.Now()
+		return &tool.CallResult{
+			Call:        tool.Call{Name: call.Name, Params: map[string]any{}, SessionID: t.sessionID},
+			Result:      &tool.ToolResult{Success: false, Output: errContent, Data: map[string]any{"error": denyErr.Error()}},
+			Err:         denyErr,
+			StartedAt:   now,
+			CompletedAt: now,
+		}, denyErr
+	}
+
+	// deny 规则在 hooks 之前评估：被拒的调用不应再触发 hook 副作用。
+	if rule, hit := matchDeny(t.deny, call.Name, call.Arguments); hit {
+		return deniedCallResult(fmt.Errorf("%w: denied by permissions.deny rule %q", ErrToolUseDenied, rule))
+	}
+
 	var (
 		params map[string]any
 		preErr error
@@ -151,16 +174,7 @@ func (t *runtimeToolExecutor) execute(ctx context.Context, call model.ToolCall, 
 		params, preErr = t.hooks.PreToolUse(ctx, coreToolUsePayload(call))
 	}
 	if preErr != nil {
-		errContent := toolCallResultContent(nil, preErr)
-		appendToolResult(errContent)
-		now := time.Now()
-		return &tool.CallResult{
-			Call:        tool.Call{Name: call.Name, Params: map[string]any{}, SessionID: t.sessionID},
-			Result:      &tool.ToolResult{Success: false, Output: errContent, Data: map[string]any{"error": preErr.Error()}},
-			Err:         preErr,
-			StartedAt:   now,
-			CompletedAt: now,
-		}, preErr
+		return deniedCallResult(preErr)
 	}
 	if params != nil {
 		call.Arguments = params

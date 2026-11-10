@@ -301,6 +301,9 @@ type Options struct {
 	skReg            *skills.Registry
 	subMgr           *subagents.Manager
 	tracer           Tracer
+	// permissionDeny 是 New() 时从 settings.Permissions.Deny 编译出的 deny
+	// 规则（见 permission_deny.go），由 runtimeToolExecutor 在工具执行前拦截。
+	permissionDeny []denyRule
 	// plugins 是 New() 时 resolvePlugins 的解析结果（手动注入 + 磁盘发现，
 	// 已应用 DisabledPlugins），供 skills/agents/MCP/commands 四路合并消费。
 	plugins []plugin.Plugin

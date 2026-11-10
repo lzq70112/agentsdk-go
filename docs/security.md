@@ -23,8 +23,15 @@ The sandbox manager is owned by tool execution (`pkg/tool/`) and is configured v
 
 ## Settings Notes
 
-`.agents/settings.json` still accepts a `permissions` object for compatibility, but v2 core does not implement an approval/ask workflow.
+`.agents/settings.json` still accepts a `permissions` object for compatibility. v2 core does not implement an approval/ask workflow; `permissions.allow` / `permissions.ask` are parsed but not enforced.
 
+- `permissions.deny` **is enforced** at tool execution (before hooks). Supported rules:
+  - `Bash` — deny the bash tool entirely.
+  - `Bash(ssh:*)` — prefix match on the command (segments of compound commands are matched individually; `VAR=value cmd` env prefixes and `xargs cmd` forms are recognized).
+  - `Bash(docker ps)` — exact command match (whitespace-normalized).
+  - `Bash(docker * rm)` — `*` acts as a wildcard within the command.
+  - Selectors on other tools (e.g. `Read(~/.ssh/**)`) are parsed but not enforced; a warning is logged at startup.
+  - Static analysis limitation: commands that obfuscate the binary name (e.g. `bash -c "ssh ..."`, `$(echo ssh)`) are not detected.
 - Use `permissions.additionalDirectories` to widen filesystem roots.
 - Use `disallowedTools` to disable built-in tools by name.
 

@@ -76,6 +76,21 @@ func loadSettingsFile(path string) (*config.Settings, error) {
 	return &settings, nil
 }
 
+// applyPermissionDenyFromSettings 把 settings.Permissions.Deny 编译进运行时
+// 可执行形式。无法执行的规则（非 bash 工具的 selector、语法畸形）显式告警，
+// 避免"配置了 deny 但实际没拦"的假防护。
+func applyPermissionDenyFromSettings(opts Options, settings *config.Settings) Options {
+	if settings == nil || settings.Permissions == nil || len(settings.Permissions.Deny) == 0 {
+		return opts
+	}
+	compiled, unenforceable := compileDenyRules(settings.Permissions.Deny)
+	for _, rule := range unenforceable {
+		runtimeLogger.warnf("permissions.deny rule %q is not enforced: only bare tool names and Bash command selectors take effect", rule)
+	}
+	opts.permissionDeny = compiled
+	return opts
+}
+
 // projectConfigFromSettings preserves the legacy Config() surface by
 // returning a defensive snapshot of the merged settings. It ensures callers
 // never observe a nil config even if settings loading failed earlier.

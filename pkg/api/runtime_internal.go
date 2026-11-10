@@ -134,6 +134,7 @@ func (rt *Runtime) runAgentWithMiddleware(prep preparedRun, extras ...middleware
 		sessionID: prep.normalized.SessionID,
 		deferred:  rt.deferred,
 		questions: rt.questions,
+		deny:      rt.opts.permissionDeny,
 	}
 	if rt.memory != nil {
 		// 主 runtime 才记账防双写标志；抽取子代理的 Memory 为 nil 不记账。
