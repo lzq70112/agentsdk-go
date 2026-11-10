@@ -60,6 +60,12 @@ func TestMatchDenyBashPrefix(t *testing.T) {
 		"cat file; ssh x",
 		"find . | xargs ssh x",
 		`ssh host "cd /x && systemctl restart nginx"`,
+		// 切段残留的段首空白不得阻断 env 前缀剥离：复合命令里
+		// "cd x && VAR=1 ssh ..." 是高频写法，段首空白曾令其逃逸拦截。
+		`cd /tmp && MSYS_NO_PATHCONV=1 ssh -i /k/id_rsa root@h "hostname; date" 2>&1 | head -5; echo "exit=$?"`,
+		`cd /tmp; MSYS_NO_PATHCONV=1 ssh x`,
+		`echo hi | MSYS_NO_PATHCONV=1 ssh x`,
+		`for ip in 1.1.1.1 2.2.2.2; do printf "%s " $ip; MSYS_NO_PATHCONV=1 ssh root@$ip "hostname"; done`,
 	}
 	for _, cmd := range hits {
 		if _, ok := matchDeny(rules, "bash", map[string]any{"command": cmd}); !ok {

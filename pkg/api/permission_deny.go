@@ -199,6 +199,9 @@ var envPrefixRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'
 
 func stripEnvPrefixes(seg string) string {
 	for {
+		// 复合命令切段后段首残留分隔符后的空白（"cd /x && VAR=1 ssh ..."），
+		// 不先去掉会令 ^ 锚定的赋值匹配失败，env 前缀后的目标命令逃逸拦截。
+		seg = strings.TrimLeft(seg, " \t")
 		loc := envPrefixRe.FindStringIndex(seg)
 		if loc == nil {
 			return seg
