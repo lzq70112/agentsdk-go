@@ -30,8 +30,10 @@ var memoryTypeGuidePrompt string
 
 // 抽取子系统常量。
 const (
-	// memoryExtractMaxIterations 是抽取子代理的回合预算（comate max_turns=5）。
-	memoryExtractMaxIterations = 5
+	// memoryExtractMaxIterations 是抽取子代理的回合预算。原值 5（comate
+	// max_turns=5）：抽取常需多轮 write 落盘多条记忆，5 轮打满即整批丢失
+	// （失败后游标照推不重试），放宽到 12。
+	memoryExtractMaxIterations = 12
 	// memoryStateFileName 是记忆桶目录下的游标状态文件名。
 	memoryStateFileName = ".memory_state.json"
 	// memoryExtractTools 是抽取子代理的工具白名单：只读四件套 + 记忆写入两件，
@@ -223,7 +225,10 @@ func (e *memoryExtractor) extractOnce(sessionID string) bool {
 		ExistingMemories: manifest,
 	})
 
-	subOpts := e.buildSubOptions(sessionID, history, prompt)
+	// 只喂游标之后的新消息：fork 全量历史会令子代理输入随会话线性膨胀
+	// （实测 231 条消息 ≈6.2 万 tokens/轮），旧消息还会诱导模型反复调工具
+	// 打满迭代上限，整批记忆随游标推进而丢失。
+	subOpts := e.buildSubOptions(sessionID, history[cursor:histLen], prompt)
 	subSessionID := newSubSessionID(sessionID)
 
 	subRuntime, err := New(e.ctx, subOpts)
@@ -267,7 +272,7 @@ func renderMemoryExtractPrompt(p extractPromptParams) string {
 
 // buildSubOptions 为抽取子代理构造自建 Options（仿 dispatch 但不走 subagent
 // tool）：继承父配置的工程设置，Memory 整链路禁用（防递归），工具收敛为白名单，
-// System 换成渲染后的 extract 提示词，历史用父会话快照克隆（fork 父上下文）。
+// System 换成渲染后的 extract 提示词，历史只含调用方切好的游标后新消息。
 func (e *memoryExtractor) buildSubOptions(sessionID string, history []message.Message, extractPrompt string) Options {
 	sub := e.rt.opts
 	// 防递归：Memory 整链路关闭（无常驻提示/无召回/无守卫/无沙箱放行），

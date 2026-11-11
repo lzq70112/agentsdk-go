@@ -475,3 +475,76 @@ func TestMemoryCloseStopsExtractor(t *testing.T) {
 	}
 	rt.memory.extractor.wg.Wait() // Close 已等待过：立即返回即通过
 }
+
+// TestMemoryExtractFeedsOnlyNewMessages 验证抽取子代理只接收游标之后的新消息，
+// 而非全量历史：全量 fork 会让输入随会话线性膨胀，并诱导模型反复调工具打满
+// 迭代上限、整批记忆随游标推进丢失（生产 9090 实测 231 条消息 × 6.2 万
+// tokens/轮，5 轮打满失败 3 次）。
+func TestMemoryExtractFeedsOnlyNewMessages(t *testing.T) {
+	memDir := t.TempDir()
+	root := newClaudeProject(t)
+	mdl := &stubModel{responses: []*model.Response{
+		{Message: model.Message{Role: "assistant", Content: "第一轮回复"}}, // 主回合 1（scheduled 前缀，不自动抽取）
+		{Message: model.Message{Role: "assistant", ToolCalls: []model.ToolCall{
+			writeMemoryToolCall(filepath.Join(memDir, "mem1.md"),
+				"---\nname: mem1\ndescription: 第一批记忆\ntype: project\n---\n\n第一批内容"),
+		}}},
+		{Message: model.Message{Role: "assistant", Content: "已保存"}}, // 抽取 1 收尾
+		{Message: model.Message{Role: "assistant", Content: "第二轮回复"}}, // 主回合 2（scheduled 前缀）
+		{Message: model.Message{Role: "assistant", ToolCalls: []model.ToolCall{
+			writeMemoryToolCall(filepath.Join(memDir, "mem2.md"),
+				"---\nname: mem2\ndescription: 第二批记忆\ntype: project\n---\n\n第二批内容"),
+		}}},
+		{Message: model.Message{Role: "assistant", Content: "已保存"}}, // 抽取 2 收尾
+	}}
+	rt, err := New(context.Background(), Options{
+		ProjectRoot: root,
+		Model:       mdl,
+		Memory:      &MemoryOptions{Dir: memDir},
+	})
+	if err != nil {
+		t.Fatalf("runtime: %v", err)
+	}
+	t.Cleanup(func() { _ = rt.Close() })
+
+	sess := "sess-delta"
+	if _, err := rt.Run(context.Background(), Request{Prompt: scheduledFirePrefix + "第一轮", SessionID: sess}); err != nil {
+		t.Fatalf("run 1: %v", err)
+	}
+	rt.memory.extractor.extractOnce(sess)
+	if _, err := rt.Run(context.Background(), Request{Prompt: scheduledFirePrefix + "第二轮", SessionID: sess}); err != nil {
+		t.Fatalf("run 2: %v", err)
+	}
+	rt.memory.extractor.extractOnce(sess)
+
+	if state := readMemoryCursor(t, memDir); state.LastCursorMessageID != 4 {
+		t.Fatalf("cursor = %d, want 4", state.LastCursorMessageID)
+	}
+	// 抽取请求依次为：请求[1]=抽取1（全量首轮）、请求[4]=抽取2（应只含第二轮）。
+	reqExtract1 := messageText(mdl.requests[1])
+	if !strings.Contains(reqExtract1, "第一轮") {
+		t.Fatalf("extract 1 should see turn-1 messages, got:\n%s", reqExtract1)
+	}
+	reqExtract2 := messageText(mdl.requests[4])
+	if !strings.Contains(reqExtract2, "第二轮") {
+		t.Fatalf("extract 2 should see turn-2 messages, got:\n%s", reqExtract2)
+	}
+	if strings.Contains(reqExtract2, "第一轮") {
+		t.Fatalf("extract 2 must not see turn-1 messages (delta-only input), got:\n%s", reqExtract2)
+	}
+	for _, name := range []string{"mem1.md", "mem2.md"} {
+		if _, err := os.Stat(filepath.Join(memDir, name)); err != nil {
+			t.Fatalf("%s missing: %v", name, err)
+		}
+	}
+}
+
+// messageText 拼接请求中全部消息文本，便于包含性断言。
+func messageText(req model.Request) string {
+	var b strings.Builder
+	for _, m := range req.Messages {
+		b.WriteString(m.Content)
+		b.WriteString("\n")
+	}
+	return b.String()
+}
