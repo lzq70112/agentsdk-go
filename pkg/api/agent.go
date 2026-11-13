@@ -802,6 +802,31 @@ func (rt *Runtime) SessionHistory(sessionID string) ([]message.Message, bool) {
 	return rt.histories.Snapshot(sessionID)
 }
 
+// SessionContextUsage 返回会话当前上下文占用与窗口上限（tokens），占用口径
+// 与 compact 触发判定一致：历史消息 token + 系统提示与可用工具定义的 overhead。
+// 窗口上限取 compact 引擎的 limit；未启用自动压缩（compactor 为 nil）时回退
+// Options.TokenLimit，再回退默认窗口。会话未加载（不存在或已被 LRU 逐出）时
+// ok=false。
+func (rt *Runtime) SessionContextUsage(sessionID string) (used, limit int, ok bool) {
+	if rt == nil || rt.histories == nil {
+		return 0, 0, false
+	}
+	hist, ok := rt.histories.Loaded(sessionID)
+	if !ok {
+		return 0, 0, false
+	}
+	limit = defaultClaudeContextLimit
+	if rt.compactor != nil {
+		limit = rt.compactor.limit
+	} else if rt.opts.TokenLimit > 0 {
+		limit = rt.opts.TokenLimit
+	}
+	used = hist.TokenCount() +
+		estimateStringTokens(rt.systemPromptForSession(sessionID, nil)) +
+		estimateToolTokens(availableToolsForSession(rt.registry, nil, rt.deferred, sessionID))
+	return used, limit, true
+}
+
 // ClearSession 清空指定 session 的历史记录。
 // 返回 true 表示 session 存在并被清空，false 表示 session 不存在。
 func (rt *Runtime) ClearSession(sessionID string) bool {
