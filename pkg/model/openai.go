@@ -682,8 +682,9 @@ func convertOpenAIResponse(completion *openai.ChatCompletion) *Response {
 
 func convertOpenAIUsage(usage openai.CompletionUsage) Usage {
 	return Usage{
-		InputTokens:  int(usage.PromptTokens),
-		OutputTokens: int(usage.CompletionTokens),
-		TotalTokens:  int(usage.TotalTokens),
+		InputTokens:     int(usage.PromptTokens),
+		OutputTokens:    int(usage.CompletionTokens),
+		TotalTokens:     int(usage.TotalTokens),
+		CacheReadTokens: int(usage.PromptTokensDetails.CachedTokens),
 	}
 }

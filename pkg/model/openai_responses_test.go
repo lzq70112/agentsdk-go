@@ -659,6 +659,23 @@ func TestConvertResponsesUsage(t *testing.T) {
 			},
 		},
 		{
+			name: "cached tokens from input details",
+			usage: responses.ResponseUsage{
+				InputTokens:  100,
+				OutputTokens: 50,
+				TotalTokens:  150,
+				InputTokensDetails: responses.ResponseUsageInputTokensDetails{
+					CachedTokens: 80,
+				},
+			},
+			want: Usage{
+				InputTokens:     100,
+				OutputTokens:    50,
+				TotalTokens:     150,
+				CacheReadTokens: 80,
+			},
+		},
+		{
 			name:  "zero usage",
 			usage: responses.ResponseUsage{},
 			want: Usage{
@@ -688,6 +705,7 @@ func TestConvertResponsesUsage(t *testing.T) {
 			assert.Equal(t, tt.want.InputTokens, result.InputTokens)
 			assert.Equal(t, tt.want.OutputTokens, result.OutputTokens)
 			assert.Equal(t, tt.want.TotalTokens, result.TotalTokens)
+			assert.Equal(t, tt.want.CacheReadTokens, result.CacheReadTokens)
 		})
 	}
 }

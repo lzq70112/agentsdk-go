@@ -527,6 +527,23 @@ func TestConvertOpenAIUsage(t *testing.T) {
 	assert.Equal(t, 100, result.InputTokens)
 	assert.Equal(t, 50, result.OutputTokens)
 	assert.Equal(t, 150, result.TotalTokens)
+	assert.Equal(t, 0, result.CacheReadTokens, "上游未报 prompt_tokens_details 时不得产生假缓存数据")
+}
+
+func TestConvertOpenAIUsageCacheRead(t *testing.T) {
+	usage := openai.CompletionUsage{
+		PromptTokens:     100,
+		CompletionTokens: 50,
+		TotalTokens:      150,
+		PromptTokensDetails: openai.CompletionUsagePromptTokensDetails{
+			CachedTokens: 80,
+		},
+	}
+
+	result := convertOpenAIUsage(usage)
+
+	assert.Equal(t, 80, result.CacheReadTokens, "cached_tokens 必须映射进 CacheReadTokens，仪表盘缓存命中统计依赖它")
+	assert.Equal(t, 0, result.CacheCreationTokens, "OpenAI 协议无缓存创建计费概念，应保持 0")
 }
 
 func TestParseJSONArgs(t *testing.T) {

@@ -510,8 +510,9 @@ func convertResponsesAPIResponse(resp *responses.Response) *Response {
 
 func convertResponsesUsage(usage responses.ResponseUsage) Usage {
 	return Usage{
-		InputTokens:  int(usage.InputTokens),
-		OutputTokens: int(usage.OutputTokens),
-		TotalTokens:  int(usage.TotalTokens),
+		InputTokens:     int(usage.InputTokens),
+		OutputTokens:    int(usage.OutputTokens),
+		TotalTokens:     int(usage.TotalTokens),
+		CacheReadTokens: int(usage.InputTokensDetails.CachedTokens),
 	}
 }
