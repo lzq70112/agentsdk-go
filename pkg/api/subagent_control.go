@@ -244,7 +244,7 @@ func (t *subagentStatusTool) Execute(ctx context.Context, params map[string]any)
 	if id != "" {
 		task, found := t.owner.lookupTask(sessionID, id)
 		if !found {
-			return &tool.ToolResult{Success: false, Output: fmt.Sprintf("找不到子任务 %q（不属于当前会话或不存在）", id)}, nil
+			return &tool.ToolResult{Success: false, Output: subtaskNotRegisteredMsg(id)}, nil
 		}
 		return &tool.ToolResult{Success: true, Output: formatTaskDetail(task)}, nil
 	}
@@ -312,7 +312,7 @@ func (t *subagentStopTool) Execute(ctx context.Context, params map[string]any) (
 
 	status, found := t.owner.cancelTask(sessionID, id)
 	if !found {
-		return &tool.ToolResult{Success: false, Output: fmt.Sprintf("找不到子任务 %q（不属于当前会话或不存在）", id)}, nil
+		return &tool.ToolResult{Success: false, Output: subtaskNotRegisteredMsg(id)}, nil
 	}
 	if status != asyncTaskRunning {
 		return &tool.ToolResult{Success: true, Output: fmt.Sprintf("子任务 %s 已结束（status=%s），无需停止。", id, status)}, nil
@@ -424,4 +424,12 @@ func formatTaskDuration(task asyncTask) string {
 		end = time.Now()
 	}
 	return end.Sub(task.startedAt).Truncate(time.Second).String()
+}
+
+// subtaskNotRegisteredMsg 构造"子任务不在注册表"的指引文案。注册表仅收录后台
+// 派发的 subagent，同步派发、宿主子系统（如工作流）任务、进程重启前的旧任务
+// 查不到都属预期行为；含糊的"找不到"会误导主 agent 判定为故障并反复重试，故
+// 按来源分类说明并给出对应处理路径。
+func subtaskNotRegisteredMsg(id string) string {
+	return fmt.Sprintf("子任务 %q 不在当前会话的后台任务注册表中（注册表仅收录后台派发的 subagent）：同步派发的任务随主回合结束，无需查询或取消；工作流子任务等宿主子系统的任务，请使用对应专用工具（如 workflow_stop 终止整条工作流）；进程重启前的旧任务已不在册。可无参调用 subagent_status 查看当前在册的后台任务。", id)
 }
